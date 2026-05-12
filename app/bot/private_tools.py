@@ -552,3 +552,30 @@ async def xend(message: Message) -> None:
     except Exception:
         logger.exception("Falha no /xend")
         await message.answer(_error_text("falha ao copiar mensagem", "verifique chat_id, permissões e tente novamente"))
+
+
+@router.message(Command("ximg"))
+async def ximg(message: Message) -> None:
+    if not _is_owner_private_message(message):
+        return
+    if not message.reply_to_message:
+        await message.answer("Use /ximg <chat_id> respondendo à mídia que deseja enviar.")
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        await message.answer("Use /ximg <chat_id> respondendo à mídia que deseja enviar.")
+        return
+    try:
+        chat_id = int(parts[1])
+    except ValueError:
+        await message.answer(_error_text("chat_id inválido", "envie o chat_id numérico após /ximg"))
+        return
+    try:
+        sent = await message.bot.copy_message(chat_id=chat_id, from_chat_id=message.chat.id, message_id=message.reply_to_message.message_id)
+        _remember_group(chat_id, str(chat_id))
+        await message.answer(_success_text("Mídia enviada.", f"Grupo: {chat_id}\nMensagem: {sent.message_id}"))
+    except TelegramForbiddenError:
+        await message.answer(_error_text("operação não permitida", "verifique se o bot pode enviar mídia no grupo de destino"))
+    except Exception:
+        logger.exception("Falha no /ximg")
+        await message.answer(_error_text("falha ao enviar mídia", "verifique chat_id, permissões e tente novamente"))
