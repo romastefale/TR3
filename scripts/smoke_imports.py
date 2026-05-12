@@ -11,20 +11,22 @@ os.environ.setdefault("DATA_DIR", tempfile.gettempdir())
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "")
 
 from app.bot.intent import detect_intent
-from app.bot.owner_tools import router as owner_router
+from app.bot.music_extras import register_music_extra_handlers
 from app.bot.private_tools import ddx_preprocess_update, router as private_router
-from app.bot.registry import register_all_handlers
-from app.bot.telegram import _playing_keyboard
-from app.db.database import init_db
+from app.bot.telegram import _playing_keyboard, bot_dispatcher
+from app.db.database import engine, init_db, run_migrations
 from app.handlers.lili_rodou import router as lili_rodou_router
 from app.main import app, dispatcher
-from app.services.lastfm import _stable_track_id
+from app.services.lastfm import _stable_track_id, lastfm_service
 from app.services.music import music_service
+from app.services.music_proxy import install_music_proxy
 from app.services.spotify import spotify_service
 
 
 def main() -> None:
+    install_music_proxy()
     init_db()
+    run_migrations(engine)
 
     assert detect_intent("tocando") == "play"
     assert detect_intent("texto qualquer") is None
@@ -36,15 +38,15 @@ def main() -> None:
     keyboard = _playing_keyboard(lastfm_track_id, 123456789, 1, 0, False)
     assert keyboard.inline_keyboard
 
-    assert owner_router is not None
     assert private_router is not None
     assert lili_rodou_router is not None
     assert ddx_preprocess_update is not None
-    assert register_all_handlers is not None
+    assert register_music_extra_handlers is not None
+    assert bot_dispatcher is dispatcher
     assert app is not None
-    assert dispatcher is not None
     assert music_service is not None
     assert spotify_service is not None
+    assert lastfm_service is not None
 
     print("TR3 smoke imports ok")
 
