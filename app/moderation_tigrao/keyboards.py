@@ -17,60 +17,45 @@ def _button(text: str, callback_data: str, style: str | None = None) -> InlineKe
 
 
 def _back_close_rows() -> list[list[InlineKeyboardButton]]:
-    return [
-        [
-            _button("Voltar", "tigrao:home", "primary"),
-            _button("Fechar", "tigrao:close", "danger"),
-        ]
-    ]
+    return [[_button("Voltar", "tigrao:home", "primary"), _button("Fechar", "tigrao:close", "danger")]]
 
 
 def home_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [_button("Escolher grupo", "tigrao:groups", "primary")],
-            [
-                _button("Ações de usuário", "tigrao:user_actions", "primary"),
-                _button("Links", "tigrao:links", "primary"),
-            ],
-            [
-                _button("Filtros DDX", "tigrao:ddx", "primary"),
-                _button("Mensagens", "tigrao:messages", "primary"),
-            ],
-            [
-                _button("Logs", "tigrao:logs", "primary"),
-                _button("Fechar", "tigrao:close", "danger"),
-            ],
+            [_button("Ações de usuário", "tigrao:user_actions", "primary"), _button("Links", "tigrao:links", "primary")],
+            [_button("Filtros DDX", "tigrao:ddx", "primary"), _button("Mensagens", "tigrao:messages", "primary")],
+            [_button("Logs", "tigrao:logs", "primary"), _button("Fechar", "tigrao:close", "danger")],
         ]
     )
 
 
+def groups_keyboard(groups: list[dict]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for group in groups[:10]:
+        chat_id = int(group["chat_id"])
+        title = str(group.get("title") or chat_id)
+        label = title if len(title) <= 40 else title[:37] + "..."
+        rows.append([_button(label, f"tigrao:group:{chat_id}", "primary")])
+    rows.append([_button("Digitar chat_id", "tigrao:group:manual", "success")])
+    rows.extend(_back_close_rows())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def user_actions_keyboard() -> InlineKeyboardMarkup:
     rows = [
-        [
-            _button("Banir", "tigrao:action:ban", "danger"),
-            _button("Desbanir", "tigrao:action:unban", "success"),
-        ],
-        [
-            _button("Mutar", "tigrao:action:mute", "danger"),
-            _button("Desmutar", "tigrao:action:unmute", "success"),
-        ],
-        [
-            _button("Aprovar entrada", "tigrao:action:approve", "success"),
-        ],
-        [
-            _button("Resetar entrada", "tigrao:action:reset", "danger"),
-        ],
+        [_button("Banir", "tigrao:action:ban", "danger"), _button("Desbanir", "tigrao:action:unban", "success")],
+        [_button("Mutar", "tigrao:action:mute", "danger"), _button("Desmutar", "tigrao:action:unmute", "success")],
+        [_button("Aprovar entrada", "tigrao:action:approve", "success")],
+        [_button("Resetar entrada", "tigrao:action:reset", "danger")],
     ]
     rows.extend(_back_close_rows())
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def links_keyboard() -> InlineKeyboardMarkup:
-    rows = [
-        [_button("Gerar link direto", "tigrao:link:direct", "success")],
-        [_button("Gerar link com aprovação", "tigrao:link:approval", "primary")],
-    ]
+    rows = [[_button("Gerar link direto", "tigrao:link:direct", "success")], [_button("Gerar link com aprovação", "tigrao:link:approval", "primary")]]
     rows.extend(_back_close_rows())
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -98,8 +83,6 @@ def ddx_keyboard() -> InlineKeyboardMarkup:
 
 
 def logs_keyboard() -> InlineKeyboardMarkup:
-    rows = [
-        [_button("Atualizar logs", "tigrao:logs:refresh", "primary")],
-    ]
+    rows = [[_button("Atualizar logs", "tigrao:logs:refresh", "primary")]]
     rows.extend(_back_close_rows())
     return InlineKeyboardMarkup(inline_keyboard=rows)
