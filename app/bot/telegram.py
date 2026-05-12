@@ -16,7 +16,6 @@ from aiogram.types import (
 )
 
 from app.bot.intent import detect_intent
-from app.config.settings import OWNER_ID
 from app.services.lastfm import lastfm_service
 from app.services.likes import likes_service
 from app.services.music import music_service
@@ -62,13 +61,19 @@ def _safe_button(text: str, callback: str, style: str | None = None) -> InlineKe
     return InlineKeyboardButton(text=text, callback_data=callback)
 
 
-def _playing_keyboard(track_id: str, total_plays: int, total_likes: int, liked: bool) -> InlineKeyboardMarkup:
+def _playing_keyboard(
+    track_id: str,
+    owner_user_id: int,
+    total_plays: int,
+    total_likes: int,
+    liked: bool,
+) -> InlineKeyboardMarkup:
     heart = "♥" if liked else "♡"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 _safe_button(f"♫ {total_plays}", f"plays:{track_id}", style="success"),
-                _safe_button(f"{heart} {total_likes}", f"like:{track_id}", style="danger"),
+                _safe_button(f"{heart} {total_likes}", f"like:{owner_user_id}:{track_id}", style="danger"),
             ]
         ]
     )
@@ -113,7 +118,7 @@ async def _send_playing(message: Message) -> None:
         f"<b><a href=\"{html.escape(user_link)}\">{display_name}</a></b> · ♥ <code>{user_total_likes}</code>\n\n"
         f"♫ <b>{track_part}</b> — <i>{artist}</i>"
     )
-    keyboard = _playing_keyboard(track_id, total_plays, total_likes, liked)
+    keyboard = _playing_keyboard(track_id, user_id, total_plays, total_likes, liked)
 
     if cover:
         await message.answer_photo(photo=cover, caption=caption, parse_mode="HTML", reply_markup=keyboard)
@@ -277,13 +282,21 @@ def _register_handlers(dp: Dispatcher) -> None:
     async def like_callback(query: CallbackQuery) -> None:
         if not query.from_user or not query.data:
             return
-        track_id = query.data.split(":", 1)[1]
-        owner_user_id = query.message.from_user.id if query.message and query.message.from_user else None
+        parts = query.data.split(":", 2)
+        if len(parts) != 3:
+            await query.answer()
+            return
+        try:
+            owner_user_id = int(parts[1])
+        except ValueError:
+            await query.answer()
+            return
+        track_id = parts[2]
         liked = await likes_service.toggle_track_like(query.from_user.id, owner_user_id, track_id)
         total_plays = await likes_service.get_track_play_count(track_id)
         total_likes = await likes_service.get_total_likes(track_id, owner_user_id=owner_user_id)
         try:
-            await query.message.edit_reply_markup(reply_markup=_playing_keyboard(track_id, total_plays, total_likes, liked))  # type: ignore[union-attr]
+            await query.message.edit_reply_markup(reply_markup=_playing_keyboard(track_id, owner_user_id, total_plays, total_likes, liked))  # type: ignore[union-attr]
         except Exception:
             logger.exception("Failed to edit like markup")
         await query.answer()
