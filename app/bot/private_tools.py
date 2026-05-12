@@ -528,23 +528,27 @@ async def xend(message: Message) -> None:
     if not _is_owner_private_message(message):
         return
     if not message.reply_to_message:
-        await message.answer("Use /xend <chat_id> respondendo à mensagem que deseja copiar.")
+        await message.answer("Use /xend <chat_id> ou /xend pin <chat_id> respondendo à mensagem que deseja copiar.")
         return
     parts = (message.text or "").split()
-    if len(parts) < 2:
-        await message.answer("Use /xend <chat_id> respondendo à mensagem que deseja copiar.")
+    should_pin = len(parts) >= 2 and parts[1].lower() == "pin"
+    chat_id_index = 2 if should_pin else 1
+    if len(parts) <= chat_id_index:
+        await message.answer("Use /xend <chat_id> ou /xend pin <chat_id> respondendo à mensagem que deseja copiar.")
         return
     try:
-        chat_id = int(parts[1])
+        chat_id = int(parts[chat_id_index])
     except ValueError:
         await message.answer(_error_text("chat_id inválido", "envie o chat_id numérico após /xend"))
         return
     try:
         copied = await message.bot.copy_message(chat_id=chat_id, from_chat_id=message.chat.id, message_id=message.reply_to_message.message_id)
+        if should_pin:
+            await message.bot.pin_chat_message(chat_id=chat_id, message_id=copied.message_id, disable_notification=True)
         _remember_group(chat_id, str(chat_id))
-        await message.answer(_success_text("Mensagem copiada.", f"Grupo: {chat_id}\nMensagem: {copied.message_id}"))
+        await message.answer(_success_text("Mensagem copiada." if not should_pin else "Mensagem copiada e fixada.", f"Grupo: {chat_id}\nMensagem: {copied.message_id}"))
     except TelegramForbiddenError:
-        await message.answer(_error_text("operação não permitida", "verifique se o bot pode enviar mensagens no grupo de destino"))
+        await message.answer(_error_text("operação não permitida", "verifique se o bot pode enviar e fixar mensagens no grupo de destino"))
     except Exception:
         logger.exception("Falha no /xend")
         await message.answer(_error_text("falha ao copiar mensagem", "verifique chat_id, permissões e tente novamente"))
