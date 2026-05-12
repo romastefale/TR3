@@ -4,7 +4,7 @@ import json
 import logging
 import re
 import unicodedata
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from aiogram import Router
 from aiogram.exceptions import TelegramForbiddenError
@@ -17,6 +17,7 @@ from app.db.database import engine
 
 logger = logging.getLogger(__name__)
 router = Router(name="private_tools")
+SINGLE_USE_EXPIRY = timedelta(minutes=5)
 
 
 def _is_owner_private_message(message: Message) -> bool:
@@ -45,6 +46,42 @@ def _error_text(reason: str, fix: str) -> str:
 
 def _success_text(title: str, details: str) -> str:
     return f"Sucesso.\n\n{title}\n{details}"
+
+
+def _ensure_known_groups_table() -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS known_groups (
+                    chat_id INTEGER PRIMARY KEY,
+                    title TEXT,
+                    updated_at DATETIME
+                );
+                """
+            )
+        )
+
+
+def _remember_group(chat_id: int, title: str | None) -> None:
+    _ensure_known_groups_table()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO known_groups (chat_id, title, updated_at)
+                VALUES (:chat_id, :title, :updated_at)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    title = excluded.title,
+                    updated_at = excluded.updated_at
+                """
+            ),
+            {
+                "chat_id": chat_id,
+                "title": title or str(chat_id),
+                "updated_at": datetime.now(timezone.utc),
+            },
+        )
 
 
 def _ensure_ddx_rules_table() -> None:
@@ -454,3 +491,51 @@ async def ddx(message: Message) -> None:
     except Exception:
         logger.exception("DDX_COMMAND_FAILED")
         await message.answer("Erro ao processar /ddx.")
+
+
+@router.message(Command("mx1"))
+async def mx1(message: Message) -> None:
+    if not _is_owner_private_message(message):
+        return
+
+    lines = _lines(message)
+    if len(lines) < 2:
+        await message.answer(
+            "Título: Link direto\n"
+            "Descrição: Gera link de entrada imediata, uso único e expiração curta.\n\n"
+            "Use:\n"
+            "/mx1\n"
+            "<chat_id>"
+        )
+        return
+
+    try:
+        chat_id = _parse_chat_id(lines[1])
+        invite = await message.bot.create_chat_invite_link(
+            chat_id=chat_id,
+            creates_join_request=False,
+            member_limit=1,
+            expire_date=datetime.now(timezone.utc) + SINGLE_USE_EXPIRY,
+        )
+        _remember_group(chat_id, str(chat_id))
+        await message.answer(
+            _success_text(
+                "Link de entrada direta gerado.",
+                f"Grupo: {chat_id}\nLink:\n{invite.invite_link}",
+            )
+        )
+    except TelegramForbiddenError:
+        await message.answer(
+            _error_text(
+                "operação não permitida",
+                "verifique se o bot é administrador do grupo e pode gerar links",
+            )
+        )
+    except Exception:
+        logger.exception("Falha ao criar link direto")
+        await message.answer(
+            _error_text(
+                "falha ao criar link",
+                "verifique o chat_id, permissões do bot e tente novamente",
+            )
+        )
