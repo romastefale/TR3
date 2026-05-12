@@ -88,6 +88,13 @@ def _track_label(track: dict) -> tuple[str, str, str, str | None]:
     return track_name, artist, url, str(cover) if cover else None
 
 
+def _user_mention(message: Message) -> str:
+    if not message.from_user:
+        return "Usuário"
+    display_name = html.escape(message.from_user.full_name or "Usuário")
+    return f'<a href="tg://user?id={message.from_user.id}">{display_name}</a>'
+
+
 async def _send_playing(message: Message) -> None:
     if not message.from_user:
         return
@@ -187,33 +194,39 @@ def _register_handlers(dp: Dispatcher) -> None:
     async def lastfm(message: Message) -> None:
         if not message.from_user:
             return
+        mention = _user_mention(message)
         parts = (message.text or "").split(maxsplit=1)
         if len(parts) < 2:
             current = await lastfm_service.get_username(message.from_user.id)
             if current:
-                await message.answer(f"Last.fm conectado: @{html.escape(current)}")
+                await message.answer(f"{mention}, seu Last.fm salvo é @{html.escape(current)}.", parse_mode="HTML")
             else:
-                await message.answer("Use: /lastfm <username>")
+                await message.answer(f"{mention}, use: /lastfm <username>", parse_mode="HTML")
             return
         try:
             username = await lastfm_service.set_username(message.from_user.id, parts[1])
         except ValueError:
-            await message.answer("Username Last.fm inválido.")
+            await message.answer(f"{mention}, username Last.fm inválido.", parse_mode="HTML")
             return
         if not LASTFM_API_KEY:
             await message.answer(
-                f"Last.fm salvo: @{html.escape(username)}\n\n"
-                "A leitura do Last.fm precisa da variável LASTFM_API_KEY no Railway. Enquanto ela não existir, o bot continua usando Spotify como fallback."
+                f"{mention}, Last.fm salvo: @{html.escape(username)}\n\n"
+                "A leitura do Last.fm precisa da variável LASTFM_API_KEY no Railway. Enquanto ela não existir, o bot continua usando Spotify como fallback.",
+                parse_mode="HTML",
             )
             return
-        await message.answer(f"Last.fm conectado: @{html.escape(username)}")
+        await message.answer(f"{mention}, Last.fm salvo: @{html.escape(username)}", parse_mode="HTML")
 
     @dp.message(Command("lastfmoff"))
     async def lastfmoff(message: Message) -> None:
         if not message.from_user:
             return
+        mention = _user_mention(message)
         removed = await lastfm_service.clear_username(message.from_user.id)
-        await message.answer("Last.fm removido." if removed else "Nenhum Last.fm estava conectado.")
+        await message.answer(
+            f"{mention}, Last.fm removido." if removed else f"{mention}, nenhum Last.fm estava conectado.",
+            parse_mode="HTML",
+        )
 
     @dp.message(Command("playing"))
     async def playing(message: Message) -> None:
