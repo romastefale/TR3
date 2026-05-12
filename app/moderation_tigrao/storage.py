@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 from typing import Any
 
@@ -183,3 +184,41 @@ def get_ddx_filters(chat_id: int) -> dict[str, Any] | None:
             .first()
         )
     return dict(row) if row else None
+
+
+def set_ddx_filters(chat_id: int, words: list[str], enabled: bool = True) -> None:
+    ensure_tables()
+    clean_words = [str(word).strip() for word in words if str(word).strip()]
+    deduped_words = list(dict.fromkeys(clean_words))
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO tigrao_ddx_filters (chat_id, words, enabled, updated_at)
+                VALUES (:chat_id, :words, :enabled, :updated_at)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    words = excluded.words,
+                    enabled = excluded.enabled,
+                    updated_at = excluded.updated_at
+                """
+            ),
+            {
+                "chat_id": chat_id,
+                "words": json.dumps(deduped_words, ensure_ascii=False),
+                "enabled": 1 if enabled else 0,
+                "updated_at": datetime.now(timezone.utc),
+            },
+        )
+
+
+def load_ddx_words(chat_id: int) -> list[str]:
+    row = get_ddx_filters(chat_id)
+    if not row:
+        return []
+    try:
+        words = json.loads(str(row.get("words") or "[]"))
+    except Exception:
+        return []
+    if not isinstance(words, list):
+        return []
+    return [str(word) for word in words]
