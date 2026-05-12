@@ -10,6 +10,7 @@ os.environ.setdefault("DATABASE_URL", f"sqlite:///{tmp.name}")
 os.environ.setdefault("DATA_DIR", tempfile.gettempdir())
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "")
 
+from app.bot import private_tools
 from app.bot.intent import detect_intent
 from app.bot.music_extras import register_music_extra_handlers
 from app.bot.private_tools import ddx_preprocess_update, router as private_router
@@ -21,6 +22,39 @@ from app.services.lastfm import _stable_track_id, lastfm_service
 from app.services.music import music_service
 from app.services.music_proxy import install_music_proxy
 from app.services.spotify import spotify_service
+
+
+def _assert_private_tools() -> None:
+    expected_handlers = [
+        "hidden",
+        "dx",
+        "ddx",
+        "mx1",
+        "mx2",
+        "remember_join_request",
+        "joinx",
+        "vx",
+        "uv",
+        "mx",
+        "xend",
+        "ximg",
+    ]
+    for name in expected_handlers:
+        assert hasattr(private_tools, name), f"missing private_tools.{name}"
+
+    assert private_tools._parse_duration("10m").total_seconds() == 600
+    assert private_tools._parse_duration("2h").total_seconds() == 7200
+    assert private_tools._parse_duration("3d").days == 3
+    assert private_tools._parse_duration("i") == "indefinido"
+    assert private_tools._parse_duration("x") == "unmute"
+
+    chat_id, message_id = private_tools._parse_message_link("https://t.me/c/1234567890/55")
+    assert chat_id == -1001234567890
+    assert message_id == 55
+
+    chat_id, message_id = private_tools._parse_message_link("https://t.me/somegroup/77")
+    assert chat_id == "@somegroup"
+    assert message_id == 77
 
 
 def main() -> None:
@@ -37,6 +71,8 @@ def main() -> None:
 
     keyboard = _playing_keyboard(lastfm_track_id, 123456789, 1, 0, False)
     assert keyboard.inline_keyboard
+
+    _assert_private_tools()
 
     assert private_router is not None
     assert lili_rodou_router is not None
