@@ -184,6 +184,35 @@ async def tigrao_ddx_receive_remove_words(message: Message) -> None:
     )
 
 
+@router.callback_query(F.data == "tigrao:ddx:off")
+async def tigrao_ddx_off(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+
+    session = get_session()
+    if not session.selected_chat_id:
+        if callback.message:
+            await callback.message.edit_text(_need_group_text(), reply_markup=home_keyboard())
+        await callback.answer()
+        return
+
+    chat_id = int(session.selected_chat_id)
+    current = load_ddx_words(chat_id)
+    set_ddx_filters(chat_id, current, enabled=False)
+    log_action(chat_id=chat_id, action="ddx_off", status="success")
+
+    if callback.message:
+        await callback.message.edit_text(
+            success_text(
+                "DDX desligado",
+                f"Grupo: {chat_id}\nFiltros preservados: {len(current)}",
+            ),
+            reply_markup=ddx_keyboard(),
+        )
+    await callback.answer()
+
+
 @router.callback_query(F.data == "tigrao:ddx:list")
 async def tigrao_ddx_list(callback: CallbackQuery) -> None:
     if not is_owner_callback(callback):
