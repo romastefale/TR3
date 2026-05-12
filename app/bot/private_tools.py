@@ -80,6 +80,43 @@ def _ddx_normalize_compact(value: str) -> str:
     return value
 
 
+def _ddx_parse_words(raw: str) -> list[str]:
+    words = [item.strip() for item in re.split(r"[,;\n]", raw) if item.strip()]
+    normalized: list[str] = []
+    seen: set[str] = set()
+    for word in words:
+        clean = _ddx_normalize_spaced(word)
+        if not clean:
+            continue
+        if clean not in seen:
+            seen.add(clean)
+            normalized.append(clean)
+    return normalized
+
+
+def _ddx_save(chat_id: int, words: list[str], enabled: bool = True) -> None:
+    _ensure_ddx_rules_table()
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO ddx_rules (chat_id, words, enabled, updated_at)
+                VALUES (:chat_id, :words, :enabled, :updated_at)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    words = excluded.words,
+                    enabled = excluded.enabled,
+                    updated_at = excluded.updated_at
+                """
+            ),
+            {
+                "chat_id": chat_id,
+                "words": json.dumps(words, ensure_ascii=False),
+                "enabled": 1 if enabled else 0,
+                "updated_at": datetime.now(timezone.utc),
+            },
+        )
+
+
 def _ddx_get(chat_id: int) -> dict[str, object] | None:
     _ensure_ddx_rules_table()
     with engine.begin() as conn:
@@ -327,3 +364,93 @@ async def dx(message: Message) -> None:
             response.append(f"- ... mais {len(failed) - 15}")
 
     await message.answer("\n".join(response))
+
+
+@router.message(Command("ddx"))
+async def ddx(message: Message) -> None:
+    if not _is_owner_private_message(message):
+        return
+
+    lines = _lines(message)
+    if len(lines) < 3:
+        await message.answer(
+            "Use:\n"
+            "/ddx\n"
+            "<chat_id>\n"
+            "<add|remove|list|off|test>\n"
+            "<palavras ou texto>"
+        )
+        return
+
+    try:
+        chat_id = _parse_chat_id(lines[1])
+        mode = lines[2].strip().lower()
+        current = _ddx_get(chat_id) or {"words": [], "enabled": True}
+        current_words = current.get("words", [])
+        if not isinstance(current_words, list):
+            current_words = []
+
+        if mode == "list":
+            await message.answer(
+                "DDX\n"
+                f"Grupo: {chat_id}\n"
+                f"Status: {'ativo' if current.get('enabled') else 'inativo'}\n"
+                f"Palavras: {', '.join(str(word) for word in current_words) if current_words else 'nenhuma'}"
+            )
+            return
+
+        if mode == "off":
+            _ddx_save(chat_id, [str(w) for w in current_words], enabled=False)
+            await message.answer(f"DDX desligado.\nGrupo: {chat_id}")
+            return
+
+        if mode == "add":
+            if len(lines) < 4:
+                await message.answer("Informe as palavras para adicionar.")
+                return
+            incoming = _ddx_parse_words("\n".join(lines[3:]))
+            if not incoming:
+                await message.answer("Nenhuma palavra válida informada.")
+                return
+            final_words = list(dict.fromkeys([str(w) for w in current_words] + incoming))
+            _ddx_save(chat_id, final_words, enabled=True)
+            await message.answer(
+                "DDX atualizado.\n"
+                f"Grupo: {chat_id}\n"
+                "Status: ativo\n"
+                f"Total de palavras: {len(final_words)}"
+            )
+            return
+
+        if mode == "remove":
+            if len(lines) < 4:
+                await message.answer("Informe as palavras para remover.")
+                return
+            remove_words = set(_ddx_parse_words("\n".join(lines[3:])))
+            final_words = [str(w) for w in current_words if str(w) not in remove_words]
+            _ddx_save(chat_id, final_words, enabled=True)
+            await message.answer(
+                "DDX atualizado.\n"
+                f"Grupo: {chat_id}\n"
+                "Status: ativo\n"
+                f"Total de palavras: {len(final_words)}"
+            )
+            return
+
+        if mode == "test":
+            if len(lines) < 4:
+                await message.answer("Informe o texto para teste.")
+                return
+            test_text = "\n".join(lines[3:])
+            matched = _ddx_match(test_text, [str(w) for w in current_words])
+            await message.answer(
+                "DDX TESTE\n"
+                f"Grupo: {chat_id}\n"
+                f"Resultado: {'detectado' if matched else 'não detectado'}"
+            )
+            return
+
+        await message.answer("Modo inválido. Use add, remove, list, off ou test.")
+    except Exception:
+        logger.exception("DDX_COMMAND_FAILED")
+        await message.answer("Erro ao processar /ddx.")
