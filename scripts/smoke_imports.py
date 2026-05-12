@@ -16,6 +16,7 @@ from app.bot.music_extras import register_music_extra_handlers
 from app.bot.private_tools import ddx_preprocess_update, router as private_router
 from app.bot.telegram import _playing_keyboard, bot_dispatcher
 from app.db.database import engine, init_db, run_migrations
+from app.handlers import lili_rodou
 from app.handlers.lili_rodou import router as lili_rodou_router
 from app.main import app, dispatcher
 from app.services.lastfm import _stable_track_id, lastfm_service
@@ -42,6 +43,10 @@ def _assert_private_tools() -> None:
     for name in expected_handlers:
         assert hasattr(private_tools, name), f"missing private_tools.{name}"
 
+    assert private_tools.OWNER_ID == 8505890439
+    assert private_tools._parse_chat_id("1001234567890") == -1001234567890
+    assert private_tools._parse_chat_id("-1001234567890") == -1001234567890
+
     assert private_tools._parse_duration("10m").total_seconds() == 600
     assert private_tools._parse_duration("2h").total_seconds() == 7200
     assert private_tools._parse_duration("3d").days == 3
@@ -55,6 +60,13 @@ def _assert_private_tools() -> None:
     chat_id, message_id = private_tools._parse_message_link("https://t.me/somegroup/77")
     assert chat_id == "@somegroup"
     assert message_id == 77
+
+
+def _assert_vvv_tools() -> None:
+    assert lili_rodou.OWNER_ID == 8505890439
+    assert lili_rodou._parse_chat_id("1001234567890") == -1001234567890
+    assert lili_rodou._parse_chat_id("-1001234567890") == -1001234567890
+    assert lili_rodou._parse_user_id("6059326627") == 6059326627
 
 
 def main() -> None:
@@ -73,6 +85,7 @@ def main() -> None:
     assert keyboard.inline_keyboard
 
     _assert_private_tools()
+    _assert_vvv_tools()
 
     assert private_router is not None
     assert lili_rodou_router is not None
