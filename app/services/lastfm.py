@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import re
 from datetime import datetime
@@ -25,8 +26,8 @@ def _clean_username(username: str) -> str:
 def _stable_track_id(artist: str, track: str) -> str:
     raw = f"{artist}:{track}".lower().strip()
     raw = re.sub(r"\s+", " ", raw)
-    safe = re.sub(r"[^a-z0-9]+", ":", raw).strip(":")
-    return f"lastfm:{safe or 'unknown'}"
+    digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
+    return f"lfm:{digest}"
 
 
 class LastfmService:
