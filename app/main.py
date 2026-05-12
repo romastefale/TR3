@@ -14,6 +14,7 @@ from app.handlers.lili_rodou import router as lili_rodou_router
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
 from app.db.database import engine, init_db, run_migrations
+from app.moderation_tigrao import ddx_router as tigrao_ddx_router, router as tigrao_router
 from app.services.music_proxy import install_music_proxy
 from app.services.spotify import spotify_service
 
@@ -48,6 +49,8 @@ async def on_startup() -> None:
         if not _telegram_dispatcher_configured:
             dispatcher.include_router(private_router)
             dispatcher.include_router(lili_rodou_router)
+            dispatcher.include_router(tigrao_router)
+            dispatcher.include_router(tigrao_ddx_router)
             _register_handlers(dispatcher)
             _telegram_dispatcher_configured = True
         await bot.set_webhook(
