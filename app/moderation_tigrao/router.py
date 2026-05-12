@@ -8,6 +8,7 @@ from aiogram.types import CallbackQuery, Message
 from app.moderation_tigrao.actions import (
     approve_join_request,
     ban_user,
+    copy_message,
     create_approval_link,
     create_direct_link,
     delete_message,
@@ -215,6 +216,34 @@ async def tigrao_private_text(message: Message) -> None:
         session.waiting_for = None
         await message.answer(_confirm_text(), reply_markup=confirm_keyboard())
         return
+
+
+@router.message(F.photo | F.video | F.document | F.animation | F.sticker | F.audio | F.voice | F.video_note)
+async def tigrao_private_media(message: Message) -> None:
+    if not is_owner_private_message(message):
+        return
+    session = get_session()
+    if session.waiting_for != "outbound_media":
+        return
+    if not session.selected_chat_id:
+        await message.answer(_need_group_text(), reply_markup=home_keyboard())
+        return
+    try:
+        copied_id = await copy_message(
+            message.bot,
+            target_chat_id=int(session.selected_chat_id),
+            from_chat_id=message.chat.id,
+            message_id=message.message_id,
+        )
+        log_action(chat_id=int(session.selected_chat_id), action="send_media", status="success")
+        clear_action()
+        await message.answer(success_text("Mídia enviada", f"Grupo: {session.selected_chat_id}\nMensagem: {copied_id}"), reply_markup=messages_keyboard())
+    except TelegramForbiddenError as exc:
+        log_action(chat_id=int(session.selected_chat_id), action="send_media", status="error", error_type=type(exc).__name__, error_message=str(exc))
+        await message.answer(error_text("Permissão insuficiente", "O Telegram recusou o envio da mídia.", "Confira se o bot pode enviar mídia no grupo."), reply_markup=messages_keyboard())
+    except Exception as exc:
+        log_action(chat_id=int(session.selected_chat_id), action="send_media", status="error", error_type=type(exc).__name__, error_message=str(exc))
+        await message.answer(error_text("Falha ao enviar mídia", f"{type(exc).__name__}: {exc}", "Confira grupo, mídia e permissões do bot."), reply_markup=messages_keyboard())
 
 
 @router.callback_query(F.data == "tigrao:home")
@@ -473,6 +502,27 @@ async def tigrao_send_text_pin(callback: CallbackQuery) -> None:
             "Tigrão — enviar e fixar\n\n"
             f"Grupo: {session.selected_chat_id}\n\n"
             "Envie agora o texto que será publicado e fixado no grupo."
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tigrao:message:media")
+async def tigrao_send_media(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    session = get_session()
+    if not session.selected_chat_id:
+        if callback.message:
+            await callback.message.edit_text(_need_group_text(), reply_markup=home_keyboard())
+        await callback.answer()
+        return
+    set_action("send_media", waiting_for="outbound_media")
+    if callback.message:
+        await callback.message.edit_text(
+            "Tigrão — enviar mídia\n\n"
+            f"Grupo: {session.selected_chat_id}\n\n"
+            "Envie agora a foto, vídeo, documento, sticker ou outra mídia que será copiada para o grupo."
         )
     await callback.answer()
 
