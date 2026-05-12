@@ -7,6 +7,7 @@ from aiogram.types import Update
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import RedirectResponse
 
+from app.bot.emergency_owner import handle_emergency_owner_command
 from app.bot.owner_tools import router as owner_router
 from app.bot.private_tools import ddx_preprocess_update, router as private_router
 from app.bot.telegram import _register_handlers, bot_dispatcher, shutdown_telegram_bot
@@ -72,6 +73,8 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
             return {"ok": True}
         data = await request.json()
         update = Update.model_validate(data, context={"bot": bot})
+        if await handle_emergency_owner_command(bot, update):
+            return {"ok": True}
         handled = False
         try:
             handled = await ddx_preprocess_update(bot, update)
