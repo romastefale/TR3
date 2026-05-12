@@ -5,6 +5,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from app.moderation_tigrao.keyboards import (
+    confirm_keyboard,
     ddx_keyboard,
     groups_keyboard,
     home_keyboard,
@@ -15,7 +16,7 @@ from app.moderation_tigrao.keyboards import (
 )
 from app.moderation_tigrao.parsers import parse_chat_id, parse_user_id
 from app.moderation_tigrao.permissions import is_owner_callback, is_owner_private_message
-from app.moderation_tigrao.state import get_session, set_action, set_selected_group
+from app.moderation_tigrao.state import clear_action, get_session, set_action, set_selected_group
 from app.moderation_tigrao.storage import list_groups, remember_group
 from app.moderation_tigrao.texts import error_text, home_text, success_text
 
@@ -37,6 +38,20 @@ def _section_text(title: str, detail: str) -> str:
     if session.selected_chat_id:
         selected = f"\n\nGrupo selecionado: {session.selected_group_title or session.selected_chat_id} ({session.selected_chat_id})"
     return f"Tigrão — {title}\n\n{detail}{selected}\n\nEscolha uma opção pelos botões abaixo."
+
+
+def _confirm_text() -> str:
+    session = get_session()
+    action_label = ACTION_LABELS.get(session.selected_action or "", session.selected_action or "ação")
+    target_user_id = session.payload.get("target_user_id")
+    return (
+        "Tigrão — confirmar ação\n\n"
+        f"Grupo: {session.selected_chat_id}\n"
+        f"Ação: {action_label}\n"
+        f"Usuário: {target_user_id}\n\n"
+        "Confirme para prosseguir ou cancele para abandonar.\n"
+        "Nesta etapa a ação ainda não será executada."
+    )
 
 
 async def _edit_private_panel(callback: CallbackQuery, text: str, reply_markup) -> None:
@@ -86,16 +101,9 @@ async def tigrao_private_text(message: Message) -> None:
         except ValueError as exc:
             await message.answer(error_text("User ID inválido", str(exc), "Envie apenas o user_id numérico, sem hífen."))
             return
-        action_label = ACTION_LABELS.get(session.selected_action or "", session.selected_action or "ação")
         session.payload["target_user_id"] = user_id
         session.waiting_for = None
-        await message.answer(
-            success_text(
-                "Dados recebidos",
-                f"Grupo: {session.selected_chat_id}\nAção: {action_label}\nUsuário: {user_id}\n\nNesta etapa a ação ainda não foi executada.",
-            ),
-            reply_markup=user_actions_keyboard(),
-        )
+        await message.answer(_confirm_text(), reply_markup=confirm_keyboard())
         return
 
 
@@ -186,6 +194,42 @@ async def tigrao_prepare_user_action(callback: CallbackQuery) -> None:
             "Envie agora apenas o user_id do alvo.\n"
             "Nesta etapa a ação ainda não será executada."
         )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tigrao:confirm")
+async def tigrao_confirm(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    session = get_session()
+    if not session.selected_chat_id or not session.selected_action or not session.payload.get("target_user_id"):
+        if callback.message:
+            await callback.message.edit_text(
+                error_text("Confirmação inválida", "Faltam dados para confirmar a ação.", "Volte ao painel e recomece o fluxo."),
+                reply_markup=home_keyboard(),
+            )
+        await callback.answer()
+        return
+    if callback.message:
+        await callback.message.edit_text(
+            success_text(
+                "Confirmação recebida",
+                "Os dados estão completos.\nNesta etapa a ação ainda não foi executada.",
+            ),
+            reply_markup=user_actions_keyboard(),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tigrao:cancel")
+async def tigrao_cancel(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    clear_action()
+    if callback.message:
+        await callback.message.edit_text("Tigrão — ação cancelada.", reply_markup=home_keyboard())
     await callback.answer()
 
 
