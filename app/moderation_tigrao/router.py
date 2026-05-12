@@ -10,6 +10,7 @@ from app.moderation_tigrao.actions import (
     ban_user,
     create_approval_link,
     create_direct_link,
+    delete_message,
     mute_user,
     reset_entry,
     unban_user,
@@ -25,7 +26,7 @@ from app.moderation_tigrao.keyboards import (
     messages_keyboard,
     user_actions_keyboard,
 )
-from app.moderation_tigrao.parsers import parse_chat_id, parse_duration, parse_user_id
+from app.moderation_tigrao.parsers import parse_chat_id, parse_duration, parse_message_link, parse_user_id
 from app.moderation_tigrao.permissions import is_owner_callback, is_owner_private_message
 from app.moderation_tigrao.state import clear_action, get_session, set_action, set_selected_group
 from app.moderation_tigrao.storage import list_groups, log_action, remember_group
@@ -128,6 +129,25 @@ async def tigrao_private_text(message: Message) -> None:
         remember_group(chat_id, str(chat_id))
         set_selected_group(chat_id, str(chat_id))
         await message.answer(success_text("Grupo selecionado", f"Grupo: {chat_id}"), reply_markup=home_keyboard())
+        return
+
+    if session.waiting_for == "message_link":
+        try:
+            link_chat_id, message_id = parse_message_link(message.text or "")
+        except ValueError as exc:
+            await message.answer(error_text("Link inválido", str(exc), "Envie um link de mensagem do Telegram."))
+            return
+        try:
+            await delete_message(message.bot, link_chat_id, message_id)
+            log_action(chat_id=int(link_chat_id) if isinstance(link_chat_id, int) else None, action="delete_by_link", status="success")
+            clear_action()
+            await message.answer(success_text("Mensagem apagada", f"Origem: {link_chat_id}\nMensagem: {message_id}"), reply_markup=messages_keyboard())
+        except TelegramForbiddenError as exc:
+            log_action(chat_id=int(link_chat_id) if isinstance(link_chat_id, int) else None, action="delete_by_link", status="error", error_type=type(exc).__name__, error_message=str(exc))
+            await message.answer(error_text("Permissão insuficiente", "O Telegram recusou a remoção da mensagem.", "Confira se o bot é administrador e pode apagar mensagens."), reply_markup=messages_keyboard())
+        except Exception as exc:
+            log_action(chat_id=int(link_chat_id) if isinstance(link_chat_id, int) else None, action="delete_by_link", status="error", error_type=type(exc).__name__, error_message=str(exc))
+            await message.answer(error_text("Falha ao apagar", f"{type(exc).__name__}: {exc}", "Confira o link e as permissões do bot."), reply_markup=messages_keyboard())
         return
 
     if session.waiting_for == "user_id":
@@ -383,6 +403,23 @@ async def tigrao_create_link(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "tigrao:messages")
 async def tigrao_messages(callback: CallbackQuery) -> None:
     await _edit_private_panel(callback, _section_text("mensagens", "Envio, fixação ou remoção de mensagens usando apenas o privado do dono."), messages_keyboard())
+
+
+@router.callback_query(F.data == "tigrao:message:delete_link")
+async def tigrao_delete_by_link(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    set_action("delete_by_link", waiting_for="message_link")
+    if callback.message:
+        await callback.message.edit_text(
+            "Tigrão — apagar por link\n\n"
+            "Envie agora o link da mensagem que deve ser apagada.\n\n"
+            "Exemplos:\n"
+            "https://t.me/c/1234567890/55\n"
+            "https://t.me/nomedogrupo/55"
+        )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "tigrao:ddx")
