@@ -131,6 +131,36 @@ async def tigrao_private_text(message: Message) -> None:
         await message.answer(success_text("Grupo selecionado", f"Grupo: {chat_id}"), reply_markup=home_keyboard())
         return
 
+    if session.waiting_for == "outbound_text":
+        if not session.selected_chat_id:
+            await message.answer(_need_group_text(), reply_markup=home_keyboard())
+            return
+        text_to_send = message.text or ""
+        if not text_to_send.strip():
+            await message.answer(error_text("Texto vazio", "Não há texto para enviar.", "Envie uma mensagem de texto válida."), reply_markup=messages_keyboard())
+            return
+        action = "send_text_pin" if session.payload.get("pin") else "send_text"
+        try:
+            sent = await message.bot.send_message(chat_id=int(session.selected_chat_id), text=text_to_send)
+            if session.payload.get("pin"):
+                await message.bot.pin_chat_message(chat_id=int(session.selected_chat_id), message_id=sent.message_id, disable_notification=True)
+            log_action(chat_id=int(session.selected_chat_id), action=action, status="success")
+            clear_action()
+            await message.answer(
+                success_text(
+                    "Mensagem enviada" if action == "send_text" else "Mensagem enviada e fixada",
+                    f"Grupo: {session.selected_chat_id}\nMensagem: {sent.message_id}",
+                ),
+                reply_markup=messages_keyboard(),
+            )
+        except TelegramForbiddenError as exc:
+            log_action(chat_id=int(session.selected_chat_id), action=action, status="error", error_type=type(exc).__name__, error_message=str(exc))
+            await message.answer(error_text("Permissão insuficiente", "O Telegram recusou o envio ou fixação da mensagem.", "Confira se o bot pode enviar e fixar mensagens no grupo."), reply_markup=messages_keyboard())
+        except Exception as exc:
+            log_action(chat_id=int(session.selected_chat_id), action=action, status="error", error_type=type(exc).__name__, error_message=str(exc))
+            await message.answer(error_text("Falha ao enviar", f"{type(exc).__name__}: {exc}", "Confira grupo, texto e permissões do bot."), reply_markup=messages_keyboard())
+        return
+
     if session.waiting_for == "message_link":
         try:
             link_chat_id, message_id = parse_message_link(message.text or "")
@@ -403,6 +433,48 @@ async def tigrao_create_link(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "tigrao:messages")
 async def tigrao_messages(callback: CallbackQuery) -> None:
     await _edit_private_panel(callback, _section_text("mensagens", "Envio, fixação ou remoção de mensagens usando apenas o privado do dono."), messages_keyboard())
+
+
+@router.callback_query(F.data == "tigrao:message:send")
+async def tigrao_send_text(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    session = get_session()
+    if not session.selected_chat_id:
+        if callback.message:
+            await callback.message.edit_text(_need_group_text(), reply_markup=home_keyboard())
+        await callback.answer()
+        return
+    set_action("send_text", waiting_for="outbound_text", pin=False)
+    if callback.message:
+        await callback.message.edit_text(
+            "Tigrão — enviar mensagem\n\n"
+            f"Grupo: {session.selected_chat_id}\n\n"
+            "Envie agora o texto que será publicado no grupo."
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tigrao:message:pin")
+async def tigrao_send_text_pin(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    session = get_session()
+    if not session.selected_chat_id:
+        if callback.message:
+            await callback.message.edit_text(_need_group_text(), reply_markup=home_keyboard())
+        await callback.answer()
+        return
+    set_action("send_text_pin", waiting_for="outbound_text", pin=True)
+    if callback.message:
+        await callback.message.edit_text(
+            "Tigrão — enviar e fixar\n\n"
+            f"Grupo: {session.selected_chat_id}\n\n"
+            "Envie agora o texto que será publicado e fixado no grupo."
+        )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "tigrao:message:delete_link")
