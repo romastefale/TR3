@@ -125,6 +125,65 @@ async def tigrao_ddx_receive_add_words(message: Message) -> None:
     )
 
 
+@router.callback_query(F.data == "tigrao:ddx:remove")
+async def tigrao_ddx_remove(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+
+    session = get_session()
+    if not session.selected_chat_id:
+        if callback.message:
+            await callback.message.edit_text(_need_group_text(), reply_markup=home_keyboard())
+        await callback.answer()
+        return
+
+    set_action("ddx_remove", waiting_for="ddx_remove_words")
+    if callback.message:
+        await callback.message.edit_text(
+            "Tigrão — remover filtro DDX\n\n"
+            f"Grupo: {session.selected_chat_id}\n\n"
+            "Envie as palavras ou frases que devem ser removidas.\n"
+            "Pode separar por vírgula, ponto e vírgula ou linha."
+        )
+    await callback.answer()
+
+
+@router.message(F.text, lambda message: get_session().waiting_for == "ddx_remove_words")
+async def tigrao_ddx_receive_remove_words(message: Message) -> None:
+    if not is_owner_private_message(message):
+        return
+
+    session = get_session()
+    if not session.selected_chat_id:
+        await message.answer(_need_group_text(), reply_markup=home_keyboard())
+        return
+
+    remove_words = set(_parse_words(message.text or ""))
+    if not remove_words:
+        await message.answer(
+            error_text("Nenhum filtro válido", "Não encontrei palavra ou frase para remover.", "Envie ao menos uma palavra ou frase."),
+            reply_markup=ddx_keyboard(),
+        )
+        return
+
+    chat_id = int(session.selected_chat_id)
+    current = load_ddx_words(chat_id)
+    final_words = [word for word in current if word not in remove_words]
+    removed_count = len(current) - len(final_words)
+    set_ddx_filters(chat_id, final_words, enabled=True)
+    log_action(chat_id=chat_id, action="ddx_remove", status="success")
+    clear_action()
+
+    await message.answer(
+        success_text(
+            "Filtro DDX atualizado",
+            f"Grupo: {chat_id}\nRemovidos: {removed_count}\nTotal de filtros: {len(final_words)}",
+        ),
+        reply_markup=ddx_keyboard(),
+    )
+
+
 @router.callback_query(F.data == "tigrao:ddx:list")
 async def tigrao_ddx_list(callback: CallbackQuery) -> None:
     if not is_owner_callback(callback):
