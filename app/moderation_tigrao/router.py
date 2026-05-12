@@ -13,13 +13,22 @@ from app.moderation_tigrao.keyboards import (
     messages_keyboard,
     user_actions_keyboard,
 )
-from app.moderation_tigrao.parsers import parse_chat_id
+from app.moderation_tigrao.parsers import parse_chat_id, parse_user_id
 from app.moderation_tigrao.permissions import is_owner_callback, is_owner_private_message
 from app.moderation_tigrao.state import get_session, set_action, set_selected_group
 from app.moderation_tigrao.storage import list_groups, remember_group
 from app.moderation_tigrao.texts import error_text, home_text, success_text
 
 router = Router(name="moderation_tigrao")
+
+ACTION_LABELS = {
+    "ban": "Banir usuário",
+    "unban": "Desbanir usuário",
+    "mute": "Mutar usuário",
+    "unmute": "Desmutar usuário",
+    "approve": "Aprovar entrada",
+    "reset": "Resetar entrada",
+}
 
 
 def _section_text(title: str, detail: str) -> str:
@@ -39,6 +48,14 @@ async def _edit_private_panel(callback: CallbackQuery, text: str, reply_markup) 
     await callback.answer()
 
 
+def _need_group_text() -> str:
+    return error_text(
+        "Nenhum grupo selecionado",
+        "Você precisa escolher o grupo antes de usar esta ação.",
+        "Toque em Escolher grupo e selecione ou digite o chat_id.",
+    )
+
+
 @router.message(Command("tigrao"))
 async def tigrao_home(message: Message) -> None:
     if not is_owner_private_message(message):
@@ -51,16 +68,35 @@ async def tigrao_private_text(message: Message) -> None:
     if not is_owner_private_message(message):
         return
     session = get_session()
-    if session.waiting_for != "chat_id":
+
+    if session.waiting_for == "chat_id":
+        try:
+            chat_id = parse_chat_id(message.text or "")
+        except ValueError as exc:
+            await message.answer(error_text("Chat ID inválido", str(exc), "Envie apenas o chat_id numérico, com ou sem hífen."))
+            return
+        remember_group(chat_id, str(chat_id))
+        set_selected_group(chat_id, str(chat_id))
+        await message.answer(success_text("Grupo selecionado", f"Grupo: {chat_id}"), reply_markup=home_keyboard())
         return
-    try:
-        chat_id = parse_chat_id(message.text or "")
-    except ValueError as exc:
-        await message.answer(error_text("Chat ID inválido", str(exc), "Envie apenas o chat_id numérico, com ou sem hífen."))
+
+    if session.waiting_for == "user_id":
+        try:
+            user_id = parse_user_id(message.text or "")
+        except ValueError as exc:
+            await message.answer(error_text("User ID inválido", str(exc), "Envie apenas o user_id numérico, sem hífen."))
+            return
+        action_label = ACTION_LABELS.get(session.selected_action or "", session.selected_action or "ação")
+        session.payload["target_user_id"] = user_id
+        session.waiting_for = None
+        await message.answer(
+            success_text(
+                "Dados recebidos",
+                f"Grupo: {session.selected_chat_id}\nAção: {action_label}\nUsuário: {user_id}\n\nNesta etapa a ação ainda não foi executada.",
+            ),
+            reply_markup=user_actions_keyboard(),
+        )
         return
-    remember_group(chat_id, str(chat_id))
-    set_selected_group(chat_id, str(chat_id))
-    await message.answer(success_text("Grupo selecionado", f"Grupo: {chat_id}"), reply_markup=home_keyboard())
 
 
 @router.callback_query(F.data == "tigrao:home")
@@ -125,6 +161,32 @@ async def tigrao_user_actions(callback: CallbackQuery) -> None:
         _section_text("ações de usuário", "Ações que exigem grupo selecionado e, em geral, apenas o user_id do alvo."),
         user_actions_keyboard(),
     )
+
+
+@router.callback_query(F.data.startswith("tigrao:action:"))
+async def tigrao_prepare_user_action(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    action = (callback.data or "").rsplit(":", 1)[-1]
+    if action not in ACTION_LABELS:
+        await callback.answer("Ação inválida.", show_alert=True)
+        return
+    session = get_session()
+    if not session.selected_chat_id:
+        if callback.message:
+            await callback.message.edit_text(_need_group_text(), reply_markup=home_keyboard())
+        await callback.answer()
+        return
+    set_action(action, waiting_for="user_id")
+    if callback.message:
+        await callback.message.edit_text(
+            f"Tigrão — {ACTION_LABELS[action]}\n\n"
+            f"Grupo: {session.selected_chat_id}\n\n"
+            "Envie agora apenas o user_id do alvo.\n"
+            "Nesta etapa a ação ainda não será executada."
+        )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "tigrao:links")
