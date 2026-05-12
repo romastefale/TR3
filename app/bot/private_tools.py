@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from aiogram import Router
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import ChatJoinRequest, Message
 from sqlalchemy import text
 
 from app.config.settings import OWNER_ID
@@ -17,6 +17,7 @@ from app.db.database import engine
 
 logger = logging.getLogger(__name__)
 router = Router(name="private_tools")
+APPROVAL_WINDOW = timedelta(hours=2)
 SINGLE_USE_EXPIRY = timedelta(minutes=5)
 
 
@@ -46,6 +47,29 @@ def _error_text(reason: str, fix: str) -> str:
 
 def _success_text(title: str, details: str) -> str:
     return f"Sucesso.\n\n{title}\n{details}"
+
+
+def _ensure_join_requests_table() -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS join_requests (
+                    user_id INTEGER,
+                    chat_id INTEGER,
+                    created_at DATETIME
+                );
+                """
+            )
+        )
+        conn.execute(
+            text(
+                """
+                CREATE INDEX IF NOT EXISTS idx_join_requests_chat_user
+                ON join_requests (chat_id, user_id, created_at);
+                """
+            )
+        )
 
 
 def _ensure_known_groups_table() -> None:
@@ -585,3 +609,42 @@ async def mx2(message: Message) -> None:
                 "verifique o chat_id, permissões do bot e tente novamente",
             )
         )
+
+
+@router.chat_join_request()
+async def remember_join_request(request: ChatJoinRequest) -> None:
+    _ensure_join_requests_table()
+    _remember_group(request.chat.id, request.chat.title or str(request.chat.id))
+
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                DELETE FROM join_requests
+                WHERE user_id = :user_id AND chat_id = :chat_id
+                """
+            ),
+            {
+                "user_id": request.from_user.id,
+                "chat_id": request.chat.id,
+            },
+        )
+        conn.execute(
+            text(
+                """
+                INSERT INTO join_requests (user_id, chat_id, created_at)
+                VALUES (:user_id, :chat_id, :created_at)
+                """
+            ),
+            {
+                "user_id": request.from_user.id,
+                "chat_id": request.chat.id,
+                "created_at": datetime.now(timezone.utc),
+            },
+        )
+
+    logger.warning(
+        "JOIN_REQUEST_REGISTERED | chat_id=%s | user_id=%s",
+        request.chat.id,
+        request.from_user.id,
+    )
