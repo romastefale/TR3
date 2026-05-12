@@ -1,9 +1,16 @@
 from __future__ import annotations
 
 from aiogram import F, Router
+from aiogram.exceptions import TelegramForbiddenError
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
+from app.moderation_tigrao.actions import (
+    approve_join_request,
+    ban_user,
+    reset_entry,
+    unban_user,
+)
 from app.moderation_tigrao.keyboards import (
     confirm_keyboard,
     ddx_keyboard,
@@ -17,7 +24,7 @@ from app.moderation_tigrao.keyboards import (
 from app.moderation_tigrao.parsers import parse_chat_id, parse_user_id
 from app.moderation_tigrao.permissions import is_owner_callback, is_owner_private_message
 from app.moderation_tigrao.state import clear_action, get_session, set_action, set_selected_group
-from app.moderation_tigrao.storage import list_groups, remember_group
+from app.moderation_tigrao.storage import list_groups, log_action, remember_group
 from app.moderation_tigrao.texts import error_text, home_text, success_text
 
 router = Router(name="moderation_tigrao")
@@ -30,6 +37,7 @@ ACTION_LABELS = {
     "approve": "Aprovar entrada",
     "reset": "Resetar entrada",
 }
+SIMPLE_EXECUTABLE_ACTIONS = {"ban", "unban", "approve", "reset"}
 
 
 def _section_text(title: str, detail: str) -> str:
@@ -49,8 +57,7 @@ def _confirm_text() -> str:
         f"Grupo: {session.selected_chat_id}\n"
         f"Ação: {action_label}\n"
         f"Usuário: {target_user_id}\n\n"
-        "Confirme para prosseguir ou cancele para abandonar.\n"
-        "Nesta etapa a ação ainda não será executada."
+        "Confirme para prosseguir ou cancele para abandonar."
     )
 
 
@@ -69,6 +76,21 @@ def _need_group_text() -> str:
         "Você precisa escolher o grupo antes de usar esta ação.",
         "Toque em Escolher grupo e selecione ou digite o chat_id.",
     )
+
+
+async def _execute_simple_action(bot, action: str, chat_id: int, user_id: int) -> str | None:
+    if action == "ban":
+        await ban_user(bot, chat_id, user_id)
+        return None
+    if action == "unban":
+        await unban_user(bot, chat_id, user_id)
+        return None
+    if action == "approve":
+        await approve_join_request(bot, chat_id, user_id)
+        return None
+    if action == "reset":
+        return await reset_entry(bot, chat_id, user_id)
+    raise ValueError(f"ação ainda não executável: {action}")
 
 
 @router.message(Command("tigrao"))
@@ -191,8 +213,7 @@ async def tigrao_prepare_user_action(callback: CallbackQuery) -> None:
         await callback.message.edit_text(
             f"Tigrão — {ACTION_LABELS[action]}\n\n"
             f"Grupo: {session.selected_chat_id}\n\n"
-            "Envie agora apenas o user_id do alvo.\n"
-            "Nesta etapa a ação ainda não será executada."
+            "Envie agora apenas o user_id do alvo."
         )
     await callback.answer()
 
@@ -203,7 +224,10 @@ async def tigrao_confirm(callback: CallbackQuery) -> None:
         await callback.answer("Acesso negado.", show_alert=True)
         return
     session = get_session()
-    if not session.selected_chat_id or not session.selected_action or not session.payload.get("target_user_id"):
+    chat_id = session.selected_chat_id
+    action = session.selected_action
+    target_user_id = session.payload.get("target_user_id")
+    if not chat_id or not action or not target_user_id:
         if callback.message:
             await callback.message.edit_text(
                 error_text("Confirmação inválida", "Faltam dados para confirmar a ação.", "Volte ao painel e recomece o fluxo."),
@@ -211,14 +235,38 @@ async def tigrao_confirm(callback: CallbackQuery) -> None:
             )
         await callback.answer()
         return
-    if callback.message:
-        await callback.message.edit_text(
-            success_text(
-                "Confirmação recebida",
-                "Os dados estão completos.\nNesta etapa a ação ainda não foi executada.",
-            ),
-            reply_markup=user_actions_keyboard(),
-        )
+    if action not in SIMPLE_EXECUTABLE_ACTIONS:
+        if callback.message:
+            await callback.message.edit_text(
+                error_text("Ação ainda não habilitada", f"A ação {ACTION_LABELS.get(action, action)} será ligada em etapa separada.", "Use por enquanto banir, desbanir, aprovar ou resetar."),
+                reply_markup=user_actions_keyboard(),
+            )
+        await callback.answer()
+        return
+
+    try:
+        extra = await _execute_simple_action(callback.bot, action, int(chat_id), int(target_user_id))
+        log_action(chat_id=int(chat_id), action=action, target_user_id=int(target_user_id), status="success")
+        clear_action()
+        details = f"Grupo: {chat_id}\nAção: {ACTION_LABELS[action]}\nUsuário: {target_user_id}"
+        if extra:
+            details += f"\nLink direto: {extra}"
+        if callback.message:
+            await callback.message.edit_text(success_text("Ação executada", details), reply_markup=user_actions_keyboard())
+    except TelegramForbiddenError as exc:
+        log_action(chat_id=int(chat_id), action=action, target_user_id=int(target_user_id), status="error", error_type=type(exc).__name__, error_message=str(exc))
+        if callback.message:
+            await callback.message.edit_text(
+                error_text("Permissão insuficiente", "O Telegram recusou a ação por falta de permissão do bot.", "Confira se o bot é administrador do grupo e tem a permissão necessária."),
+                reply_markup=user_actions_keyboard(),
+            )
+    except Exception as exc:
+        log_action(chat_id=int(chat_id), action=action, target_user_id=int(target_user_id), status="error", error_type=type(exc).__name__, error_message=str(exc))
+        if callback.message:
+            await callback.message.edit_text(
+                error_text("Falha ao executar", f"{type(exc).__name__}: {exc}", "Confira grupo, user_id e permissões do bot."),
+                reply_markup=user_actions_keyboard(),
+            )
     await callback.answer()
 
 
