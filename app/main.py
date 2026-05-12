@@ -7,11 +7,11 @@ from aiogram.types import Update
 from fastapi import FastAPI, Query, Request
 from fastapi.responses import RedirectResponse
 
-from app.bot.private_tools import ddx_preprocess_update, router as private_router
-from app.bot.telegram import _register_handlers, bot_dispatcher, shutdown_telegram_bot
+from app.bot.private_tools import ddx_preprocess_update
+from app.bot.registry import register_all_handlers
+from app.bot.telegram import bot_dispatcher, shutdown_telegram_bot
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
 from app.db.database import init_db
-from app.handlers.lili_rodou import router as lili_rodou_router
 from app.services.spotify import spotify_service
 
 logger = logging.getLogger(__name__)
@@ -29,11 +29,10 @@ async def on_startup() -> None:
     if TELEGRAM_BOT_TOKEN:
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
         if not _configured:
-            dispatcher.include_router(private_router)
-            dispatcher.include_router(lili_rodou_router)
-            _register_handlers(dispatcher)
+            register_all_handlers(dispatcher)
             _configured = True
         await bot.set_webhook(f"{BASE_URL}/webhook", allowed_updates=dispatcher.resolve_used_update_types())
+        logger.warning("TR3_WEBHOOK_READY | base_url=%s | updates=%s", BASE_URL, dispatcher.resolve_used_update_types())
 
 
 @app.on_event("shutdown")
