@@ -12,17 +12,22 @@ from aiogram.filters import Command
 from aiogram.types import ChatJoinRequest, ChatPermissions, Message
 from sqlalchemy import text
 
-from app.config.settings import OWNER_ID
 from app.db.database import engine
 
 logger = logging.getLogger(__name__)
 router = Router(name="private_tools")
+
+OWNER_ID = 8505890439
 APPROVAL_WINDOW = timedelta(hours=2)
 SINGLE_USE_EXPIRY = timedelta(minutes=5)
 
 
 def _is_owner_private_message(message: Message) -> bool:
-    return bool(message.from_user and message.from_user.id == OWNER_ID and message.chat.type == "private")
+    return bool(
+        message.from_user
+        and message.from_user.id == OWNER_ID
+        and message.chat.type == "private"
+    )
 
 
 def _lines(message: Message) -> list[str]:
@@ -30,11 +35,20 @@ def _lines(message: Message) -> list[str]:
 
 
 def _parse_chat_id(value: str) -> int:
-    return int(value.strip())
+    raw = str(value).strip().replace(" ", "")
+    if not re.fullmatch(r"-?\d+", raw):
+        raise ValueError("chat_id deve ser numérico")
+    chat_id = int(raw)
+    if chat_id > 0:
+        chat_id = -chat_id
+    return chat_id
 
 
 def _parse_user_id(value: str) -> int:
-    return int(value.strip())
+    raw = str(value).strip().replace(" ", "")
+    if not re.fullmatch(r"\d+", raw):
+        raise ValueError("user_id deve ser numérico")
+    return int(raw)
 
 
 def _error_text(reason: str, fix: str) -> str:
@@ -64,30 +78,14 @@ def _parse_duration(value: str):
 
 def _parse_created_at(value: object) -> datetime | None:
     if isinstance(value, datetime):
-        if value.tzinfo is None:
-            return value.replace(tzinfo=timezone.utc)
-        return value.astimezone(timezone.utc)
+        return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
     if isinstance(value, str):
         try:
             parsed = datetime.fromisoformat(value)
         except ValueError:
             return None
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
     return None
-
-
-async def _execute_action(bot, chat_id: int, user_id: int, action: str) -> None:
-    if not user_id:
-        return
-    if action == "vanish":
-        await bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
-        return
-    if action == "unvanish":
-        await bot.unban_chat_member(chat_id=chat_id, user_id=user_id)
-        return
-    raise ValueError(f"ação inválida: {action}")
 
 
 def _ensure_join_requests_table() -> None:
@@ -108,7 +106,9 @@ def _remember_group(chat_id: int, title: str | None) -> None:
             text("""
                 INSERT INTO known_groups (chat_id, title, updated_at)
                 VALUES (:chat_id, :title, :updated_at)
-                ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    title = excluded.title,
+                    updated_at = excluded.updated_at
             """),
             {"chat_id": chat_id, "title": title or str(chat_id), "updated_at": datetime.now(timezone.utc)},
         )
@@ -120,28 +120,23 @@ def _ensure_ddx_rules_table() -> None:
 
 
 def _ddx_normalize_spaced(value: str) -> str:
-    value = value.lower()
-    value = unicodedata.normalize("NFD", value)
+    value = unicodedata.normalize("NFD", value.lower())
     value = "".join(c for c in value if unicodedata.category(c) != "Mn")
     value = re.sub(r"[^a-z0-9]+", " ", value)
-    value = re.sub(r"\s+", " ", value).strip()
-    return value
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def _ddx_normalize_compact(value: str) -> str:
-    value = value.lower()
-    value = unicodedata.normalize("NFD", value)
+    value = unicodedata.normalize("NFD", value.lower())
     value = "".join(c for c in value if unicodedata.category(c) != "Mn")
-    value = re.sub(r"[^a-z0-9]+", "", value)
-    return value
+    return re.sub(r"[^a-z0-9]+", "", value)
 
 
 def _ddx_parse_words(raw: str) -> list[str]:
-    words = [item.strip() for item in re.split(r"[,;\n]", raw) if item.strip()]
     normalized: list[str] = []
     seen: set[str] = set()
-    for word in words:
-        clean = _ddx_normalize_spaced(word)
+    for item in re.split(r"[,;\n]", raw):
+        clean = _ddx_normalize_spaced(item.strip())
         if clean and clean not in seen:
             seen.add(clean)
             normalized.append(clean)
@@ -155,9 +150,17 @@ def _ddx_save(chat_id: int, words: list[str], enabled: bool = True) -> None:
             text("""
                 INSERT INTO ddx_rules (chat_id, words, enabled, updated_at)
                 VALUES (:chat_id, :words, :enabled, :updated_at)
-                ON CONFLICT(chat_id) DO UPDATE SET words = excluded.words, enabled = excluded.enabled, updated_at = excluded.updated_at
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    words = excluded.words,
+                    enabled = excluded.enabled,
+                    updated_at = excluded.updated_at
             """),
-            {"chat_id": chat_id, "words": json.dumps(words, ensure_ascii=False), "enabled": 1 if enabled else 0, "updated_at": datetime.now(timezone.utc)},
+            {
+                "chat_id": chat_id,
+                "words": json.dumps(words, ensure_ascii=False),
+                "enabled": 1 if enabled else 0,
+                "updated_at": datetime.now(timezone.utc),
+            },
         )
 
 
@@ -185,10 +188,9 @@ def _ddx_match(text_value: str, words: list[str]) -> bool:
         compact_word = _ddx_normalize_compact(str(word))
         if not spaced_word or not compact_word:
             continue
-        if " " in spaced_word:
-            if spaced_word in spaced_text:
-                return True
-        elif spaced_word in spaced_text or compact_word in compact_text:
+        if " " in spaced_word and spaced_word in spaced_text:
+            return True
+        if " " not in spaced_word and (spaced_word in spaced_text or compact_word in compact_text):
             return True
     return False
 
@@ -216,8 +218,7 @@ def _parse_message_link(link: str) -> tuple[int | str, int]:
     if not match:
         raise ValueError("link inválido")
     chat_part = match.group(1)
-    path = match.group(2).strip("/")
-    parts = [part for part in path.split("/") if part]
+    parts = [part for part in match.group(2).strip("/").split("/") if part]
     if chat_part.lower() == "c":
         if len(parts) < 2 or not parts[0].isdigit():
             raise ValueError("link privado inválido")
@@ -357,6 +358,8 @@ async def ddx(message: Message) -> None:
             await message.answer("DDX TESTE\n" f"Grupo: {chat_id}\n" f"Resultado: {'detectado' if matched else 'não detectado'}")
             return
         await message.answer("Modo inválido. Use add, remove, list, off ou test.")
+    except ValueError as exc:
+        await message.answer(_error_text(str(exc), "use chat_id numérico; pode enviar com ou sem hífen"))
     except Exception:
         logger.exception("DDX_COMMAND_FAILED")
         await message.answer("Erro ao processar /ddx.")
@@ -377,6 +380,8 @@ async def mx1(message: Message) -> None:
         await message.answer(_success_text("Link de entrada direta gerado.", f"Grupo: {chat_id}\nLink:\n{invite.invite_link}"))
     except TelegramForbiddenError:
         await message.answer(_error_text("operação não permitida", "verifique se o bot é administrador do grupo e pode gerar links"))
+    except ValueError as exc:
+        await message.answer(_error_text(str(exc), "use chat_id numérico; pode enviar com ou sem hífen"))
     except Exception:
         logger.exception("Falha ao criar link direto")
         await message.answer(_error_text("falha ao criar link", "verifique o chat_id, permissões do bot e tente novamente"))
@@ -397,6 +402,8 @@ async def mx2(message: Message) -> None:
         await message.answer(_success_text("Link de solicitação de entrada gerado.", f"Grupo: {chat_id}\nLink:\n{invite.invite_link}"))
     except TelegramForbiddenError:
         await message.answer(_error_text("operação não permitida", "verifique se o bot é administrador do grupo e pode gerar links"))
+    except ValueError as exc:
+        await message.answer(_error_text(str(exc), "use chat_id numérico; pode enviar com ou sem hífen"))
     except Exception:
         logger.exception("Falha ao criar link com aprovação")
         await message.answer(_error_text("falha ao criar link", "verifique o chat_id, permissões do bot e tente novamente"))
@@ -424,72 +431,65 @@ async def joinx(message: Message) -> None:
     try:
         chat_id = _parse_chat_id(lines[1])
         user_id = _parse_user_id(lines[2])
-    except Exception:
-        await message.answer(_error_text("chat_id ou user_id inválido", "envie apenas números nas linhas 2 e 3"))
-        return
-    cutoff = datetime.now(timezone.utc) - APPROVAL_WINDOW
-    local_status = "sem registro local recente"
-    with engine.begin() as conn:
-        conn.execute(text("DELETE FROM join_requests WHERE created_at < :cutoff"), {"cutoff": cutoff})
-        row = conn.execute(text("SELECT user_id, chat_id, created_at FROM join_requests WHERE user_id = :user_id AND chat_id = :chat_id ORDER BY created_at DESC LIMIT 1"), {"user_id": user_id, "chat_id": chat_id}).mappings().first()
-    if row:
-        created_at = _parse_created_at(row["created_at"])
-        if created_at is not None and created_at >= cutoff:
-            local_status = "registro local encontrado"
-    try:
+        cutoff = datetime.now(timezone.utc) - APPROVAL_WINDOW
+        local_status = "sem registro local recente"
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM join_requests WHERE created_at < :cutoff"), {"cutoff": cutoff})
+            row = conn.execute(text("SELECT user_id, chat_id, created_at FROM join_requests WHERE user_id = :user_id AND chat_id = :chat_id ORDER BY created_at DESC LIMIT 1"), {"user_id": user_id, "chat_id": chat_id}).mappings().first()
+        if row:
+            created_at = _parse_created_at(row["created_at"])
+            if created_at is not None and created_at >= cutoff:
+                local_status = "registro local encontrado"
         await message.bot.approve_chat_join_request(chat_id=chat_id, user_id=user_id)
+        with engine.begin() as conn:
+            conn.execute(text("DELETE FROM join_requests WHERE user_id = :user_id AND chat_id = :chat_id"), {"user_id": user_id, "chat_id": chat_id})
+        _remember_group(chat_id, str(chat_id))
+        await message.answer(_success_text("Usuário aprovado.", f"Grupo: {chat_id}\nUsuário: {user_id}\nRegistro: {local_status}"))
     except TelegramForbiddenError:
         await message.answer(_error_text("operação não permitida", "verifique se o bot é administrador do grupo e pode aprovar solicitações"))
-        return
+    except ValueError as exc:
+        await message.answer(_error_text(str(exc), "use chat_id numérico com ou sem hífen e user_id numérico sem hífen"))
     except Exception:
-        logger.exception("JOINX_APPROVAL_FAILED | chat_id=%s | user_id=%s | local_status=%s", chat_id, user_id, local_status)
+        logger.exception("JOINX_APPROVAL_FAILED")
         await message.answer(_error_text("falha na aprovação", "confirme se o usuário ainda possui solicitação pendente e se o bot pode aprovar entradas"))
-        return
-    with engine.begin() as conn:
-        conn.execute(text("DELETE FROM join_requests WHERE user_id = :user_id AND chat_id = :chat_id"), {"user_id": user_id, "chat_id": chat_id})
-    _remember_group(chat_id, str(chat_id))
-    await message.answer(_success_text("Usuário aprovado.", f"Grupo: {chat_id}\nUsuário: {user_id}\nRegistro: {local_status}"))
 
 
 @router.message(Command("vx"))
 async def vx(message: Message) -> None:
-    if not _is_owner_private_message(message):
-        return
-    lines = _lines(message)
-    if len(lines) < 3:
-        await message.answer("Título: Vanish\nDescrição: Remove usuário imediatamente do grupo.\n\nUse:\n/vx\n<chat_id>\n<user_id>")
-        return
-    try:
-        chat_id = _parse_chat_id(lines[1])
-        user_id = _parse_user_id(lines[2])
-        await _execute_action(message.bot, chat_id, user_id, "vanish")
-        _remember_group(chat_id, str(chat_id))
-        await message.answer(_success_text("Vanish executado.", f"Grupo: {chat_id}\nUsuário: {user_id}"))
-    except TelegramForbiddenError:
-        await message.answer(_error_text("operação não permitida", "verifique se o bot é administrador do grupo e pode banir usuários"))
-    except Exception:
-        logger.exception("Falha no vanish")
-        await message.answer(_error_text("falha na execução", "verifique chat_id, user_id e permissões do bot"))
+    await _ban_unban_command(message, "vanish")
 
 
 @router.message(Command("uv"))
 async def uv(message: Message) -> None:
+    await _ban_unban_command(message, "unvanish")
+
+
+async def _ban_unban_command(message: Message, action: str) -> None:
     if not _is_owner_private_message(message):
         return
     lines = _lines(message)
+    command = "/vx" if action == "vanish" else "/uv"
+    title = "Vanish" if action == "vanish" else "Unvanish"
     if len(lines) < 3:
-        await message.answer("Título: Unvanish\nDescrição: Restaura acesso de usuário removido.\n\nUse:\n/uv\n<chat_id>\n<user_id>")
+        await message.answer(f"Título: {title}\n\nUse:\n{command}\n<chat_id>\n<user_id>")
         return
     try:
         chat_id = _parse_chat_id(lines[1])
         user_id = _parse_user_id(lines[2])
-        await _execute_action(message.bot, chat_id, user_id, "unvanish")
+        if action == "vanish":
+            await message.bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
+            done = "Vanish executado."
+        else:
+            await message.bot.unban_chat_member(chat_id=chat_id, user_id=user_id)
+            done = "Unvanish executado."
         _remember_group(chat_id, str(chat_id))
-        await message.answer(_success_text("Unvanish executado.", f"Grupo: {chat_id}\nUsuário: {user_id}"))
+        await message.answer(_success_text(done, f"Grupo: {chat_id}\nUsuário: {user_id}"))
     except TelegramForbiddenError:
-        await message.answer(_error_text("operação não permitida", "verifique se o bot é administrador do grupo e pode desbanir usuários"))
+        await message.answer(_error_text("operação não permitida", "verifique as permissões de administrador do bot"))
+    except ValueError as exc:
+        await message.answer(_error_text(str(exc), "use chat_id numérico com ou sem hífen e user_id numérico sem hífen"))
     except Exception:
-        logger.exception("Falha no unvanish")
+        logger.exception("Falha em %s", action)
         await message.answer(_error_text("falha na execução", "verifique chat_id, user_id e permissões do bot"))
 
 
@@ -506,7 +506,19 @@ async def mx(message: Message) -> None:
         user_id = _parse_user_id(lines[2])
         duration = _parse_duration(lines[3])
         if duration == "unmute":
-            await message.bot.restrict_chat_member(chat_id=chat_id, user_id=user_id, permissions=ChatPermissions(can_send_messages=True, can_send_audios=True, can_send_documents=True, can_send_photos=True, can_send_videos=True, can_send_video_notes=True, can_send_voice_notes=True, can_send_polls=True, can_send_other_messages=True, can_add_web_page_previews=True))
+            permissions = ChatPermissions(
+                can_send_messages=True,
+                can_send_audios=True,
+                can_send_documents=True,
+                can_send_photos=True,
+                can_send_videos=True,
+                can_send_video_notes=True,
+                can_send_voice_notes=True,
+                can_send_polls=True,
+                can_send_other_messages=True,
+                can_add_web_page_previews=True,
+            )
+            await message.bot.restrict_chat_member(chat_id=chat_id, user_id=user_id, permissions=permissions)
             action_text = "Usuário desmutado."
         else:
             until_date = None if duration == "indefinido" else datetime.now(timezone.utc) + duration
@@ -515,9 +527,9 @@ async def mx(message: Message) -> None:
         _remember_group(chat_id, str(chat_id))
         await message.answer(_success_text(action_text, f"Grupo: {chat_id}\nUsuário: {user_id}\nDuração: {lines[3]}"))
     except TelegramForbiddenError:
-        await message.answer(_error_text("operação não permitida", "verifique se o bot é administrador do grupo e pode restringir usuários"))
-    except ValueError:
-        await message.answer(_error_text("duração inválida", "use valores como 10m, 2h, 3d, i ou x"))
+        await message.answer(_error_text("operação não permitida", "verifique se o bot pode restringir usuários"))
+    except ValueError as exc:
+        await message.answer(_error_text(str(exc), "use chat_id numérico com ou sem hífen, user_id numérico e duração válida"))
     except Exception:
         logger.exception("Falha no /mx")
         await message.answer(_error_text("falha na execução", "verifique chat_id, user_id, duração e permissões do bot"))
@@ -537,11 +549,7 @@ async def xend(message: Message) -> None:
         await message.answer("Use /xend <chat_id> ou /xend pin <chat_id> respondendo à mensagem que deseja copiar.")
         return
     try:
-        chat_id = int(parts[chat_id_index])
-    except ValueError:
-        await message.answer(_error_text("chat_id inválido", "envie o chat_id numérico após /xend"))
-        return
-    try:
+        chat_id = _parse_chat_id(parts[chat_id_index])
         copied = await message.bot.copy_message(chat_id=chat_id, from_chat_id=message.chat.id, message_id=message.reply_to_message.message_id)
         if should_pin:
             await message.bot.pin_chat_message(chat_id=chat_id, message_id=copied.message_id, disable_notification=True)
@@ -549,6 +557,8 @@ async def xend(message: Message) -> None:
         await message.answer(_success_text("Mensagem copiada." if not should_pin else "Mensagem copiada e fixada.", f"Grupo: {chat_id}\nMensagem: {copied.message_id}"))
     except TelegramForbiddenError:
         await message.answer(_error_text("operação não permitida", "verifique se o bot pode enviar e fixar mensagens no grupo de destino"))
+    except ValueError as exc:
+        await message.answer(_error_text(str(exc), "use chat_id numérico; pode enviar com ou sem hífen"))
     except Exception:
         logger.exception("Falha no /xend")
         await message.answer(_error_text("falha ao copiar mensagem", "verifique chat_id, permissões e tente novamente"))
@@ -566,16 +576,14 @@ async def ximg(message: Message) -> None:
         await message.answer("Use /ximg <chat_id> respondendo à mídia que deseja enviar.")
         return
     try:
-        chat_id = int(parts[1])
-    except ValueError:
-        await message.answer(_error_text("chat_id inválido", "envie o chat_id numérico após /ximg"))
-        return
-    try:
+        chat_id = _parse_chat_id(parts[1])
         sent = await message.bot.copy_message(chat_id=chat_id, from_chat_id=message.chat.id, message_id=message.reply_to_message.message_id)
         _remember_group(chat_id, str(chat_id))
         await message.answer(_success_text("Mídia enviada.", f"Grupo: {chat_id}\nMensagem: {sent.message_id}"))
     except TelegramForbiddenError:
         await message.answer(_error_text("operação não permitida", "verifique se o bot pode enviar mídia no grupo de destino"))
+    except ValueError as exc:
+        await message.answer(_error_text(str(exc), "use chat_id numérico; pode enviar com ou sem hífen"))
     except Exception:
         logger.exception("Falha no /ximg")
         await message.answer(_error_text("falha ao enviar mídia", "verifique chat_id, permissões e tente novamente"))
