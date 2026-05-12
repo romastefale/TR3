@@ -152,7 +152,8 @@ class LikesService:
                     )
                 ).scalar_one_or_none()
                 if existing:
-                    existing.liked = 0 if int(existing.liked or 1) == 1 else 1
+                    current_liked = 1 if existing.liked is None else int(existing.liked)
+                    existing.liked = 0 if current_liked == 1 else 1
                     db.commit()
                     return bool(existing.liked == 1)
 
