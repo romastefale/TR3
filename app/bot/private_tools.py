@@ -22,11 +22,7 @@ SINGLE_USE_EXPIRY = timedelta(minutes=5)
 
 
 def _is_owner_private_message(message: Message) -> bool:
-    return bool(
-        message.from_user
-        and message.from_user.id == OWNER_ID
-        and message.chat.type == "private"
-    )
+    return bool(message.from_user and message.from_user.id == OWNER_ID and message.chat.type == "private")
 
 
 def _lines(message: Message) -> list[str]:
@@ -65,30 +61,27 @@ def _parse_created_at(value: object) -> datetime | None:
     return None
 
 
+async def _execute_action(bot, chat_id: int, user_id: int, action: str) -> None:
+    if not user_id:
+        return
+    if action == "vanish":
+        await bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
+        return
+    if action == "unvanish":
+        await bot.unban_chat_member(chat_id=chat_id, user_id=user_id)
+        return
+    raise ValueError(f"ação inválida: {action}")
+
+
 def _ensure_join_requests_table() -> None:
     with engine.begin() as conn:
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS join_requests (
-                user_id INTEGER,
-                chat_id INTEGER,
-                created_at DATETIME
-            );
-        """))
-        conn.execute(text("""
-            CREATE INDEX IF NOT EXISTS idx_join_requests_chat_user
-            ON join_requests (chat_id, user_id, created_at);
-        """))
+        conn.execute(text("CREATE TABLE IF NOT EXISTS join_requests (user_id INTEGER, chat_id INTEGER, created_at DATETIME);"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS idx_join_requests_chat_user ON join_requests (chat_id, user_id, created_at);"))
 
 
 def _ensure_known_groups_table() -> None:
     with engine.begin() as conn:
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS known_groups (
-                chat_id INTEGER PRIMARY KEY,
-                title TEXT,
-                updated_at DATETIME
-            );
-        """))
+        conn.execute(text("CREATE TABLE IF NOT EXISTS known_groups (chat_id INTEGER PRIMARY KEY, title TEXT, updated_at DATETIME);"))
 
 
 def _remember_group(chat_id: int, title: str | None) -> None:
@@ -98,9 +91,7 @@ def _remember_group(chat_id: int, title: str | None) -> None:
             text("""
                 INSERT INTO known_groups (chat_id, title, updated_at)
                 VALUES (:chat_id, :title, :updated_at)
-                ON CONFLICT(chat_id) DO UPDATE SET
-                    title = excluded.title,
-                    updated_at = excluded.updated_at
+                ON CONFLICT(chat_id) DO UPDATE SET title = excluded.title, updated_at = excluded.updated_at
             """),
             {"chat_id": chat_id, "title": title or str(chat_id), "updated_at": datetime.now(timezone.utc)},
         )
@@ -108,14 +99,7 @@ def _remember_group(chat_id: int, title: str | None) -> None:
 
 def _ensure_ddx_rules_table() -> None:
     with engine.begin() as conn:
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS ddx_rules (
-                chat_id INTEGER PRIMARY KEY,
-                words TEXT,
-                enabled INTEGER,
-                updated_at DATETIME
-            );
-        """))
+        conn.execute(text("CREATE TABLE IF NOT EXISTS ddx_rules (chat_id INTEGER PRIMARY KEY, words TEXT, enabled INTEGER, updated_at DATETIME);"))
 
 
 def _ddx_normalize_spaced(value: str) -> str:
@@ -141,9 +125,7 @@ def _ddx_parse_words(raw: str) -> list[str]:
     seen: set[str] = set()
     for word in words:
         clean = _ddx_normalize_spaced(word)
-        if not clean:
-            continue
-        if clean not in seen:
+        if clean and clean not in seen:
             seen.add(clean)
             normalized.append(clean)
     return normalized
@@ -156,27 +138,16 @@ def _ddx_save(chat_id: int, words: list[str], enabled: bool = True) -> None:
             text("""
                 INSERT INTO ddx_rules (chat_id, words, enabled, updated_at)
                 VALUES (:chat_id, :words, :enabled, :updated_at)
-                ON CONFLICT(chat_id) DO UPDATE SET
-                    words = excluded.words,
-                    enabled = excluded.enabled,
-                    updated_at = excluded.updated_at
+                ON CONFLICT(chat_id) DO UPDATE SET words = excluded.words, enabled = excluded.enabled, updated_at = excluded.updated_at
             """),
-            {
-                "chat_id": chat_id,
-                "words": json.dumps(words, ensure_ascii=False),
-                "enabled": 1 if enabled else 0,
-                "updated_at": datetime.now(timezone.utc),
-            },
+            {"chat_id": chat_id, "words": json.dumps(words, ensure_ascii=False), "enabled": 1 if enabled else 0, "updated_at": datetime.now(timezone.utc)},
         )
 
 
 def _ddx_get(chat_id: int) -> dict[str, object] | None:
     _ensure_ddx_rules_table()
     with engine.begin() as conn:
-        row = conn.execute(
-            text("SELECT words, enabled FROM ddx_rules WHERE chat_id = :chat_id"),
-            {"chat_id": chat_id},
-        ).mappings().first()
+        row = conn.execute(text("SELECT words, enabled FROM ddx_rules WHERE chat_id = :chat_id"), {"chat_id": chat_id}).mappings().first()
     if not row:
         return None
     try:
@@ -214,10 +185,9 @@ def _extract_message_links(text_value: str | None) -> list[str]:
     seen: set[str] = set()
     for link in links:
         item = link.strip().strip("<>()[]{}\"'").rstrip(".,;:")
-        if not item or item in seen:
-            continue
-        seen.add(item)
-        cleaned.append(item)
+        if item and item not in seen:
+            seen.add(item)
+            cleaned.append(item)
     return cleaned
 
 
@@ -444,10 +414,7 @@ async def joinx(message: Message) -> None:
     local_status = "sem registro local recente"
     with engine.begin() as conn:
         conn.execute(text("DELETE FROM join_requests WHERE created_at < :cutoff"), {"cutoff": cutoff})
-        row = conn.execute(
-            text("SELECT user_id, chat_id, created_at FROM join_requests WHERE user_id = :user_id AND chat_id = :chat_id ORDER BY created_at DESC LIMIT 1"),
-            {"user_id": user_id, "chat_id": chat_id},
-        ).mappings().first()
+        row = conn.execute(text("SELECT user_id, chat_id, created_at FROM join_requests WHERE user_id = :user_id AND chat_id = :chat_id ORDER BY created_at DESC LIMIT 1"), {"user_id": user_id, "chat_id": chat_id}).mappings().first()
     if row:
         created_at = _parse_created_at(row["created_at"])
         if created_at is not None and created_at >= cutoff:
@@ -465,3 +432,45 @@ async def joinx(message: Message) -> None:
         conn.execute(text("DELETE FROM join_requests WHERE user_id = :user_id AND chat_id = :chat_id"), {"user_id": user_id, "chat_id": chat_id})
     _remember_group(chat_id, str(chat_id))
     await message.answer(_success_text("Usuário aprovado.", f"Grupo: {chat_id}\nUsuário: {user_id}\nRegistro: {local_status}"))
+
+
+@router.message(Command("vx"))
+async def vx(message: Message) -> None:
+    if not _is_owner_private_message(message):
+        return
+    lines = _lines(message)
+    if len(lines) < 3:
+        await message.answer("Título: Vanish\nDescrição: Remove usuário imediatamente do grupo.\n\nUse:\n/vx\n<chat_id>\n<user_id>")
+        return
+    try:
+        chat_id = _parse_chat_id(lines[1])
+        user_id = _parse_user_id(lines[2])
+        await _execute_action(message.bot, chat_id, user_id, "vanish")
+        _remember_group(chat_id, str(chat_id))
+        await message.answer(_success_text("Vanish executado.", f"Grupo: {chat_id}\nUsuário: {user_id}"))
+    except TelegramForbiddenError:
+        await message.answer(_error_text("operação não permitida", "verifique se o bot é administrador do grupo e pode banir usuários"))
+    except Exception:
+        logger.exception("Falha no vanish")
+        await message.answer(_error_text("falha na execução", "verifique chat_id, user_id e permissões do bot"))
+
+
+@router.message(Command("uv"))
+async def uv(message: Message) -> None:
+    if not _is_owner_private_message(message):
+        return
+    lines = _lines(message)
+    if len(lines) < 3:
+        await message.answer("Título: Unvanish\nDescrição: Restaura acesso de usuário removido.\n\nUse:\n/uv\n<chat_id>\n<user_id>")
+        return
+    try:
+        chat_id = _parse_chat_id(lines[1])
+        user_id = _parse_user_id(lines[2])
+        await _execute_action(message.bot, chat_id, user_id, "unvanish")
+        _remember_group(chat_id, str(chat_id))
+        await message.answer(_success_text("Unvanish executado.", f"Grupo: {chat_id}\nUsuário: {user_id}"))
+    except TelegramForbiddenError:
+        await message.answer(_error_text("operação não permitida", "verifique se o bot é administrador do grupo e pode desbanir usuários"))
+    except Exception:
+        logger.exception("Falha no unvanish")
+        await message.answer(_error_text("falha na execução", "verifique chat_id, user_id e permissões do bot"))
