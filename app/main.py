@@ -14,6 +14,7 @@ from app.handlers.lili_rodou import router as lili_rodou_router
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
 from app.db.database import engine, init_db, run_migrations
+from app.services.music_proxy import install_music_proxy
 from app.services.spotify import spotify_service
 
 app = FastAPI(title="Minimal Backend")
@@ -27,6 +28,7 @@ _telegram_dispatcher_configured = False
 @app.on_event("startup")
 async def on_startup() -> None:
     global bot, _telegram_dispatcher_configured
+    install_music_proxy()
     init_db()
     run_migrations(engine)
     with engine.begin() as conn:
