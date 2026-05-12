@@ -145,11 +145,14 @@ class LikesService:
         with self._new_session() as db:
             try:
                 existing = db.execute(
-                    select(TrackLike).where(
+                    select(TrackLike)
+                    .where(
                         TrackLike.user_id == user_id,
                         TrackLike.owner_user_id == owner_user_id,
                         TrackLike.track_id == track_id,
                     )
+                    .order_by(TrackLike.id.asc())
+                    .limit(1)
                 ).scalar_one_or_none()
                 if existing:
                     current_liked = 1 if existing.liked is None else int(existing.liked)
