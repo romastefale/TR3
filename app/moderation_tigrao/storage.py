@@ -39,6 +39,18 @@ def ensure_tables() -> None:
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS tigrao_ddx_filters (
+                    chat_id INTEGER PRIMARY KEY,
+                    words TEXT,
+                    enabled INTEGER,
+                    updated_at DATETIME
+                );
+                """
+            )
+        )
 
 
 def remember_group(chat_id: int, title: str | None = None) -> None:
@@ -151,3 +163,23 @@ def list_logs(limit: int = 10) -> list[dict[str, Any]]:
             .all()
         )
     return [dict(row) for row in rows]
+
+
+def get_ddx_filters(chat_id: int) -> dict[str, Any] | None:
+    ensure_tables()
+    with engine.begin() as conn:
+        row = (
+            conn.execute(
+                text(
+                    """
+                    SELECT chat_id, words, enabled, updated_at
+                    FROM tigrao_ddx_filters
+                    WHERE chat_id = :chat_id
+                    """
+                ),
+                {"chat_id": chat_id},
+            )
+            .mappings()
+            .first()
+        )
+    return dict(row) if row else None
