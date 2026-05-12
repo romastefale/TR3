@@ -16,12 +16,19 @@ def _button(text: str, callback_data: str, style: str | None = None) -> InlineKe
     return InlineKeyboardButton(text=text, callback_data=callback_data)
 
 
+def _back_close_rows() -> list[list[InlineKeyboardButton]]:
+    return [
+        [
+            _button("Voltar", "tigrao:home", "primary"),
+            _button("Fechar", "tigrao:close", "danger"),
+        ]
+    ]
+
+
 def home_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(
         inline_keyboard=[
-            [
-                _button("Escolher grupo", "tigrao:groups", "primary"),
-            ],
+            [_button("Escolher grupo", "tigrao:groups", "primary")],
             [
                 _button("Ações de usuário", "tigrao:user_actions", "primary"),
                 _button("Links", "tigrao:links", "primary"),
@@ -36,3 +43,63 @@ def home_keyboard() -> InlineKeyboardMarkup:
             ],
         ]
     )
+
+
+def user_actions_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [
+            _button("Banir", "tigrao:action:ban", "danger"),
+            _button("Desbanir", "tigrao:action:unban", "success"),
+        ],
+        [
+            _button("Mutar", "tigrao:action:mute", "danger"),
+            _button("Desmutar", "tigrao:action:unmute", "success"),
+        ],
+        [
+            _button("Aprovar entrada", "tigrao:action:approve", "success"),
+        ],
+        [
+            _button("Resetar entrada", "tigrao:action:reset", "danger"),
+        ],
+    ]
+    rows.extend(_back_close_rows())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def links_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [_button("Gerar link direto", "tigrao:link:direct", "success")],
+        [_button("Gerar link com aprovação", "tigrao:link:approval", "primary")],
+    ]
+    rows.extend(_back_close_rows())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def messages_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [_button("Enviar mensagem", "tigrao:message:send", "primary")],
+        [_button("Enviar e fixar", "tigrao:message:pin", "success")],
+        [_button("Enviar mídia", "tigrao:message:media", "primary")],
+        [_button("Apagar por link", "tigrao:message:delete_link", "danger")],
+    ]
+    rows.extend(_back_close_rows())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def ddx_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [_button("Adicionar filtro", "tigrao:ddx:add", "success")],
+        [_button("Remover filtro", "tigrao:ddx:remove", "danger")],
+        [_button("Listar filtros", "tigrao:ddx:list", "primary")],
+        [_button("Desligar DDX", "tigrao:ddx:off", "danger")],
+    ]
+    rows.extend(_back_close_rows())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def logs_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [_button("Atualizar logs", "tigrao:logs:refresh", "primary")],
+    ]
+    rows.extend(_back_close_rows())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
