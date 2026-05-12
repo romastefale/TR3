@@ -30,7 +30,7 @@ from app.moderation_tigrao.keyboards import (
 from app.moderation_tigrao.parsers import parse_chat_id, parse_duration, parse_message_link, parse_user_id
 from app.moderation_tigrao.permissions import is_owner_callback, is_owner_private_message
 from app.moderation_tigrao.state import clear_action, get_session, set_action, set_selected_group
-from app.moderation_tigrao.storage import list_groups, log_action, remember_group
+from app.moderation_tigrao.storage import list_groups, list_logs, log_action, remember_group
 from app.moderation_tigrao.texts import error_text, home_text, success_text
 
 router = Router(name="moderation_tigrao")
@@ -68,6 +68,25 @@ def _confirm_text() -> str:
         f"{duration_line}\n"
         "Confirme para prosseguir ou cancele para abandonar."
     )
+
+
+def _logs_text() -> str:
+    rows = list_logs(10)
+    if not rows:
+        return "Tigrão — logs\n\nNenhum registro encontrado."
+    lines = ["Tigrão — logs", "", "Últimos registros:"]
+    for row in rows:
+        status = row.get("status") or "-"
+        action = row.get("action") or "-"
+        chat_id = row.get("chat_id") or "-"
+        target = row.get("target_user_id") or "-"
+        created_at = row.get("created_at") or "-"
+        error_type = row.get("error_type")
+        line = f"#{row.get('id')} | {status} | {action} | grupo {chat_id} | alvo {target} | {created_at}"
+        if error_type:
+            line += f" | erro {error_type}"
+        lines.append(line)
+    return "\n".join(lines)
 
 
 async def _edit_private_panel(callback: CallbackQuery, text: str, reply_markup) -> None:
@@ -549,9 +568,9 @@ async def tigrao_ddx(callback: CallbackQuery) -> None:
     await _edit_private_panel(callback, _section_text("filtros DDX", "Configuração futura dos filtros de remoção automática por texto."), ddx_keyboard())
 
 
-@router.callback_query(F.data == "tigrao:logs")
+@router.callback_query(F.data.in_({"tigrao:logs", "tigrao:logs:refresh"}))
 async def tigrao_logs(callback: CallbackQuery) -> None:
-    await _edit_private_panel(callback, _section_text("logs", "Consulta futura dos registros internos de ações executadas pelo painel."), logs_keyboard())
+    await _edit_private_panel(callback, _logs_text(), logs_keyboard())
 
 
 @router.callback_query(F.data == "tigrao:close")
