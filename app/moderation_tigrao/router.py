@@ -8,6 +8,8 @@ from aiogram.types import CallbackQuery, Message
 from app.moderation_tigrao.actions import (
     approve_join_request,
     ban_user,
+    create_approval_link,
+    create_direct_link,
     mute_user,
     reset_entry,
     unban_user,
@@ -330,6 +332,52 @@ async def tigrao_cancel(callback: CallbackQuery) -> None:
 @router.callback_query(F.data == "tigrao:links")
 async def tigrao_links(callback: CallbackQuery) -> None:
     await _edit_private_panel(callback, _section_text("links", "Geração de links de entrada para o grupo selecionado."), links_keyboard())
+
+
+@router.callback_query(F.data.startswith("tigrao:link:"))
+async def tigrao_create_link(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    session = get_session()
+    if not session.selected_chat_id:
+        if callback.message:
+            await callback.message.edit_text(_need_group_text(), reply_markup=home_keyboard())
+        await callback.answer()
+        return
+    link_type = (callback.data or "").rsplit(":", 1)[-1]
+    action = "link_direct" if link_type == "direct" else "link_approval"
+    try:
+        if link_type == "direct":
+            invite_link = await create_direct_link(callback.bot, int(session.selected_chat_id))
+            title = "Link direto gerado"
+        elif link_type == "approval":
+            invite_link = await create_approval_link(callback.bot, int(session.selected_chat_id))
+            title = "Link com aprovação gerado"
+        else:
+            await callback.answer("Tipo de link inválido.", show_alert=True)
+            return
+        log_action(chat_id=int(session.selected_chat_id), action=action, status="success")
+        if callback.message:
+            await callback.message.edit_text(
+                success_text(title, f"Grupo: {session.selected_chat_id}\nLink: {invite_link}"),
+                reply_markup=links_keyboard(),
+            )
+    except TelegramForbiddenError as exc:
+        log_action(chat_id=int(session.selected_chat_id), action=action, status="error", error_type=type(exc).__name__, error_message=str(exc))
+        if callback.message:
+            await callback.message.edit_text(
+                error_text("Permissão insuficiente", "O Telegram recusou a criação do link.", "Confira se o bot é administrador do grupo e pode criar links de convite."),
+                reply_markup=links_keyboard(),
+            )
+    except Exception as exc:
+        log_action(chat_id=int(session.selected_chat_id), action=action, status="error", error_type=type(exc).__name__, error_message=str(exc))
+        if callback.message:
+            await callback.message.edit_text(
+                error_text("Falha ao criar link", f"{type(exc).__name__}: {exc}", "Confira grupo e permissões do bot."),
+                reply_markup=links_keyboard(),
+            )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "tigrao:messages")
