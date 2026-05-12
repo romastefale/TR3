@@ -539,3 +539,49 @@ async def mx1(message: Message) -> None:
                 "verifique o chat_id, permissões do bot e tente novamente",
             )
         )
+
+
+@router.message(Command("mx2"))
+async def mx2(message: Message) -> None:
+    if not _is_owner_private_message(message):
+        return
+
+    lines = _lines(message)
+    if len(lines) < 2:
+        await message.answer(
+            "Título: Link com aprovação\n"
+            "Descrição: Gera link onde a entrada depende de aprovação.\n\n"
+            "Use:\n"
+            "/mx2\n"
+            "<chat_id>"
+        )
+        return
+
+    try:
+        chat_id = _parse_chat_id(lines[1])
+        invite = await message.bot.create_chat_invite_link(
+            chat_id=chat_id,
+            creates_join_request=True,
+        )
+        _remember_group(chat_id, str(chat_id))
+        await message.answer(
+            _success_text(
+                "Link de solicitação de entrada gerado.",
+                f"Grupo: {chat_id}\nLink:\n{invite.invite_link}",
+            )
+        )
+    except TelegramForbiddenError:
+        await message.answer(
+            _error_text(
+                "operação não permitida",
+                "verifique se o bot é administrador do grupo e pode gerar links",
+            )
+        )
+    except Exception:
+        logger.exception("Falha ao criar link com aprovação")
+        await message.answer(
+            _error_text(
+                "falha ao criar link",
+                "verifique o chat_id, permissões do bot e tente novamente",
+            )
+        )
