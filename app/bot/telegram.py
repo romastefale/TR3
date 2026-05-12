@@ -16,6 +16,7 @@ from aiogram.types import (
 )
 
 from app.bot.intent import detect_intent
+from app.config.settings import LASTFM_API_KEY
 from app.services.lastfm import lastfm_service
 from app.services.likes import likes_service
 from app.services.music import music_service
@@ -198,6 +199,12 @@ def _register_handlers(dp: Dispatcher) -> None:
             username = await lastfm_service.set_username(message.from_user.id, parts[1])
         except ValueError:
             await message.answer("Username Last.fm inválido.")
+            return
+        if not LASTFM_API_KEY:
+            await message.answer(
+                f"Last.fm salvo: @{html.escape(username)}\n\n"
+                "A leitura do Last.fm precisa da variável LASTFM_API_KEY no Railway. Enquanto ela não existir, o bot continua usando Spotify como fallback."
+            )
             return
         await message.answer(f"Last.fm conectado: @{html.escape(username)}")
 
