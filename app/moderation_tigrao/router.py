@@ -8,8 +8,10 @@ from aiogram.types import CallbackQuery, Message
 from app.moderation_tigrao.actions import (
     approve_join_request,
     ban_user,
+    mute_user,
     reset_entry,
     unban_user,
+    unmute_user,
 )
 from app.moderation_tigrao.keyboards import (
     confirm_keyboard,
@@ -21,7 +23,7 @@ from app.moderation_tigrao.keyboards import (
     messages_keyboard,
     user_actions_keyboard,
 )
-from app.moderation_tigrao.parsers import parse_chat_id, parse_user_id
+from app.moderation_tigrao.parsers import parse_chat_id, parse_duration, parse_user_id
 from app.moderation_tigrao.permissions import is_owner_callback, is_owner_private_message
 from app.moderation_tigrao.state import clear_action, get_session, set_action, set_selected_group
 from app.moderation_tigrao.storage import list_groups, log_action, remember_group
@@ -37,7 +39,7 @@ ACTION_LABELS = {
     "approve": "Aprovar entrada",
     "reset": "Resetar entrada",
 }
-SIMPLE_EXECUTABLE_ACTIONS = {"ban", "unban", "approve", "reset"}
+SIMPLE_EXECUTABLE_ACTIONS = {"ban", "unban", "unmute", "approve", "reset"}
 
 
 def _section_text(title: str, detail: str) -> str:
@@ -52,11 +54,14 @@ def _confirm_text() -> str:
     session = get_session()
     action_label = ACTION_LABELS.get(session.selected_action or "", session.selected_action or "ação")
     target_user_id = session.payload.get("target_user_id")
+    duration_label = session.payload.get("duration_label")
+    duration_line = f"Duração: {duration_label}\n" if duration_label else ""
     return (
         "Tigrão — confirmar ação\n\n"
         f"Grupo: {session.selected_chat_id}\n"
         f"Ação: {action_label}\n"
-        f"Usuário: {target_user_id}\n\n"
+        f"Usuário: {target_user_id}\n"
+        f"{duration_line}\n"
         "Confirme para prosseguir ou cancele para abandonar."
     )
 
@@ -78,12 +83,18 @@ def _need_group_text() -> str:
     )
 
 
-async def _execute_simple_action(bot, action: str, chat_id: int, user_id: int) -> str | None:
+async def _execute_simple_action(bot, action: str, chat_id: int, user_id: int, payload: dict) -> str | None:
     if action == "ban":
         await ban_user(bot, chat_id, user_id)
         return None
     if action == "unban":
         await unban_user(bot, chat_id, user_id)
+        return None
+    if action == "unmute":
+        await unmute_user(bot, chat_id, user_id)
+        return None
+    if action == "mute":
+        await mute_user(bot, chat_id, user_id, payload["duration"])
         return None
     if action == "approve":
         await approve_join_request(bot, chat_id, user_id)
@@ -124,6 +135,31 @@ async def tigrao_private_text(message: Message) -> None:
             await message.answer(error_text("User ID inválido", str(exc), "Envie apenas o user_id numérico, sem hífen."))
             return
         session.payload["target_user_id"] = user_id
+        if session.selected_action == "mute":
+            session.waiting_for = "duration"
+            await message.answer(
+                "Tigrão — duração do mute\n\n"
+                f"Grupo: {session.selected_chat_id}\n"
+                f"Usuário: {user_id}\n\n"
+                "Envie a duração. Exemplos:\n"
+                "10m, 2h, 3d ou i para indefinido."
+            )
+            return
+        session.waiting_for = None
+        await message.answer(_confirm_text(), reply_markup=confirm_keyboard())
+        return
+
+    if session.waiting_for == "duration":
+        try:
+            duration = parse_duration(message.text or "")
+        except ValueError as exc:
+            await message.answer(error_text("Duração inválida", str(exc), "Use valores como 10m, 2h, 3d ou i."))
+            return
+        if duration == "desmutar":
+            await message.answer(error_text("Duração inválida", "x é usado para desmutar, não para mutar.", "Use 10m, 2h, 3d ou i."))
+            return
+        session.payload["duration"] = duration
+        session.payload["duration_label"] = str(message.text or "").strip()
         session.waiting_for = None
         await message.answer(_confirm_text(), reply_markup=confirm_keyboard())
         return
@@ -235,22 +271,32 @@ async def tigrao_confirm(callback: CallbackQuery) -> None:
             )
         await callback.answer()
         return
-    if action not in SIMPLE_EXECUTABLE_ACTIONS:
+    if action == "mute" and "duration" not in session.payload:
         if callback.message:
             await callback.message.edit_text(
-                error_text("Ação ainda não habilitada", f"A ação {ACTION_LABELS.get(action, action)} será ligada em etapa separada.", "Use por enquanto banir, desbanir, aprovar ou resetar."),
+                error_text("Duração ausente", "Falta informar a duração do mute.", "Recomece a ação de mutar usuário."),
+                reply_markup=user_actions_keyboard(),
+            )
+        await callback.answer()
+        return
+    if action not in SIMPLE_EXECUTABLE_ACTIONS and action != "mute":
+        if callback.message:
+            await callback.message.edit_text(
+                error_text("Ação ainda não habilitada", f"A ação {ACTION_LABELS.get(action, action)} será ligada em etapa separada.", "Use uma ação já habilitada."),
                 reply_markup=user_actions_keyboard(),
             )
         await callback.answer()
         return
 
     try:
-        extra = await _execute_simple_action(callback.bot, action, int(chat_id), int(target_user_id))
+        extra = await _execute_simple_action(callback.bot, action, int(chat_id), int(target_user_id), session.payload)
         log_action(chat_id=int(chat_id), action=action, target_user_id=int(target_user_id), status="success")
-        clear_action()
         details = f"Grupo: {chat_id}\nAção: {ACTION_LABELS[action]}\nUsuário: {target_user_id}"
+        if session.payload.get("duration_label"):
+            details += f"\nDuração: {session.payload['duration_label']}"
         if extra:
             details += f"\nLink direto: {extra}"
+        clear_action()
         if callback.message:
             await callback.message.edit_text(success_text("Ação executada", details), reply_markup=user_actions_keyboard())
     except TelegramForbiddenError as exc:
