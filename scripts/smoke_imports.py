@@ -11,7 +11,9 @@ os.environ.setdefault("DATA_DIR", tempfile.gettempdir())
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "")
 
 from app.bot.intent import detect_intent
+from app.bot.owner_tools import router as owner_router
 from app.bot.private_tools import ddx_preprocess_update, router as private_router
+from app.bot.registry import register_all_handlers
 from app.bot.telegram import _playing_keyboard
 from app.db.database import init_db
 from app.handlers.lili_rodou import router as lili_rodou_router
@@ -34,9 +36,11 @@ def main() -> None:
     keyboard = _playing_keyboard(lastfm_track_id, 123456789, 1, 0, False)
     assert keyboard.inline_keyboard
 
+    assert owner_router is not None
     assert private_router is not None
     assert lili_rodou_router is not None
     assert ddx_preprocess_update is not None
+    assert register_all_handlers is not None
     assert app is not None
     assert dispatcher is not None
     assert music_service is not None
