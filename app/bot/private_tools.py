@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from aiogram import Router
 from aiogram.exceptions import TelegramForbiddenError
 from aiogram.filters import Command
-from aiogram.types import ChatJoinRequest, Message
+from aiogram.types import ChatJoinRequest, ChatPermissions, Message
 from sqlalchemy import text
 
 from app.config.settings import OWNER_ID
@@ -43,6 +43,23 @@ def _error_text(reason: str, fix: str) -> str:
 
 def _success_text(title: str, details: str) -> str:
     return f"Sucesso.\n\n{title}\n{details}"
+
+
+def _parse_duration(value: str):
+    value = value.strip().lower()
+    if value == "i":
+        return "indefinido"
+    if value == "x":
+        return "unmute"
+    if value.isdigit():
+        return timedelta(minutes=int(value))
+    if value.endswith("m"):
+        return timedelta(minutes=int(value[:-1]))
+    if value.endswith("h"):
+        return timedelta(hours=int(value[:-1]))
+    if value.endswith("d"):
+        return timedelta(days=int(value[:-1]))
+    raise ValueError("duração inválida")
 
 
 def _parse_created_at(value: object) -> datetime | None:
@@ -474,3 +491,33 @@ async def uv(message: Message) -> None:
     except Exception:
         logger.exception("Falha no unvanish")
         await message.answer(_error_text("falha na execução", "verifique chat_id, user_id e permissões do bot"))
+
+
+@router.message(Command("mx"))
+async def mx(message: Message) -> None:
+    if not _is_owner_private_message(message):
+        return
+    lines = _lines(message)
+    if len(lines) < 4:
+        await message.answer("Título: Restrição\nDescrição: Muta ou desmuta usuário.\n\nUse:\n/mx\n<chat_id>\n<user_id>\n<10m|2h|3d|i|x>")
+        return
+    try:
+        chat_id = _parse_chat_id(lines[1])
+        user_id = _parse_user_id(lines[2])
+        duration = _parse_duration(lines[3])
+        if duration == "unmute":
+            await message.bot.restrict_chat_member(chat_id=chat_id, user_id=user_id, permissions=ChatPermissions(can_send_messages=True, can_send_audios=True, can_send_documents=True, can_send_photos=True, can_send_videos=True, can_send_video_notes=True, can_send_voice_notes=True, can_send_polls=True, can_send_other_messages=True, can_add_web_page_previews=True))
+            action_text = "Usuário desmutado."
+        else:
+            until_date = None if duration == "indefinido" else datetime.now(timezone.utc) + duration
+            await message.bot.restrict_chat_member(chat_id=chat_id, user_id=user_id, permissions=ChatPermissions(can_send_messages=False), until_date=until_date)
+            action_text = "Usuário mutado."
+        _remember_group(chat_id, str(chat_id))
+        await message.answer(_success_text(action_text, f"Grupo: {chat_id}\nUsuário: {user_id}\nDuração: {lines[3]}"))
+    except TelegramForbiddenError:
+        await message.answer(_error_text("operação não permitida", "verifique se o bot é administrador do grupo e pode restringir usuários"))
+    except ValueError:
+        await message.answer(_error_text("duração inválida", "use valores como 10m, 2h, 3d, i ou x"))
+    except Exception:
+        logger.exception("Falha no /mx")
+        await message.answer(_error_text("falha na execução", "verifique chat_id, user_id, duração e permissões do bot"))
