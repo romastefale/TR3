@@ -68,7 +68,11 @@ async def telegram_webhook(request: Request) -> dict[str, bool]:
             return {"ok": True}
         data = await request.json()
         update = Update.model_validate(data, context={"bot": bot})
-        handled = await ddx_preprocess_update(bot, update)
+        handled = False
+        try:
+            handled = await ddx_preprocess_update(bot, update)
+        except Exception as exc:
+            logger.exception("PREPROCESS_FAILED: %s", type(exc).__name__)
         if not handled:
             await dispatcher.feed_update(bot, update)
         return {"ok": True}
