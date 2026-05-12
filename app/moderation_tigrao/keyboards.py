@@ -54,6 +54,16 @@ def user_actions_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [_button("Confirmar", "tigrao:confirm", "success")],
+            [_button("Cancelar", "tigrao:cancel", "danger")],
+            [_button("Voltar", "tigrao:user_actions", "primary")],
+        ]
+    )
+
+
 def links_keyboard() -> InlineKeyboardMarkup:
     rows = [[_button("Gerar link direto", "tigrao:link:direct", "success")], [_button("Gerar link com aprovação", "tigrao:link:approval", "primary")]]
     rows.extend(_back_close_rows())
