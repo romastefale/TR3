@@ -88,7 +88,7 @@ DATABASE_URL
 
 ## Deploy Railway
 
-Start command:
+O repositório contém `Procfile` e `railway.toml` com o mesmo start command:
 
 ```text
 python -m app.bootstrap
@@ -99,6 +99,18 @@ Healthcheck:
 ```text
 /healthz
 ```
+
+Para usar no mesmo padrão do TR2, copie as variáveis do serviço TR2 no Railway e adicione `LASTFM_API_KEY`. Se usar o mesmo bot token, desligue/remova o webhook do TR2 antes de subir o TR3, porque um mesmo bot do Telegram só pode ter um webhook ativo por vez.
+
+## Smoke test local
+
+Antes do deploy, rode:
+
+```text
+python scripts/smoke_imports.py
+```
+
+O teste valida imports, inicialização isolada do banco, aliases e limite de callback do Last.fm.
 
 ## Observações técnicas
 
