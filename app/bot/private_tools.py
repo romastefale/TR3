@@ -521,3 +521,30 @@ async def mx(message: Message) -> None:
     except Exception:
         logger.exception("Falha no /mx")
         await message.answer(_error_text("falha na execução", "verifique chat_id, user_id, duração e permissões do bot"))
+
+
+@router.message(Command("xend"))
+async def xend(message: Message) -> None:
+    if not _is_owner_private_message(message):
+        return
+    if not message.reply_to_message:
+        await message.answer("Use /xend <chat_id> respondendo à mensagem que deseja copiar.")
+        return
+    parts = (message.text or "").split()
+    if len(parts) < 2:
+        await message.answer("Use /xend <chat_id> respondendo à mensagem que deseja copiar.")
+        return
+    try:
+        chat_id = int(parts[1])
+    except ValueError:
+        await message.answer(_error_text("chat_id inválido", "envie o chat_id numérico após /xend"))
+        return
+    try:
+        copied = await message.bot.copy_message(chat_id=chat_id, from_chat_id=message.chat.id, message_id=message.reply_to_message.message_id)
+        _remember_group(chat_id, str(chat_id))
+        await message.answer(_success_text("Mensagem copiada.", f"Grupo: {chat_id}\nMensagem: {copied.message_id}"))
+    except TelegramForbiddenError:
+        await message.answer(_error_text("operação não permitida", "verifique se o bot pode enviar mensagens no grupo de destino"))
+    except Exception:
+        logger.exception("Falha no /xend")
+        await message.answer(_error_text("falha ao copiar mensagem", "verifique chat_id, permissões e tente novamente"))
