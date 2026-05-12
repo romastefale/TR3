@@ -1,16 +1,33 @@
 from __future__ import annotations
 
 import asyncio
+import re
 
 from aiogram import Router, types
 from aiogram.filters import Command
 
-from app.config.settings import OWNER_ID
-
 router = Router()
 
+OWNER_ID = 8505890439
 KICK_RESET_DELAY_SECONDS = 1
 INVITE_LINK_NAME = "vvv-reset-link"
+
+
+def _parse_chat_id(value: str) -> int:
+    raw = str(value).strip().replace(" ", "")
+    if not re.fullmatch(r"-?\d+", raw):
+        raise ValueError("chat_id deve ser numérico")
+    chat_id = int(raw)
+    if chat_id > 0:
+        chat_id = -chat_id
+    return chat_id
+
+
+def _parse_user_id(value: str) -> int:
+    raw = str(value).strip().replace(" ", "")
+    if not re.fullmatch(r"\d+", raw):
+        raise ValueError("user_id deve ser numérico")
+    return int(raw)
 
 
 def parse_payload(text: str | None) -> tuple[int | None, int | None]:
@@ -18,8 +35,8 @@ def parse_payload(text: str | None) -> tuple[int | None, int | None]:
         return None, None
     try:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
-        chat_id = int(lines[1])
-        user_id = int(lines[2])
+        chat_id = _parse_chat_id(lines[1])
+        user_id = _parse_user_id(lines[2])
         return chat_id, user_id
     except Exception:
         return None, None
@@ -54,6 +71,7 @@ async def vvv(message: types.Message) -> None:
         await message.answer(
             "Não deu certo.\n\n"
             "Erro: formato inválido.\n"
+            "Use chat_id numérico com ou sem hífen e user_id numérico sem hífen.\n"
             "Use:\n"
             "/vvv\n"
             "<chat_id>\n"
@@ -66,7 +84,7 @@ async def vvv(message: types.Message) -> None:
     except Exception as exc:
         await message.answer(
             "Não deu certo.\n\n"
-            "Erro no kick-reset: não consegui remover e liberar o usuário.\n"
+            "Erro no reset de entrada: não consegui remover e liberar o usuário.\n"
             f"Detalhe técnico: {type(exc).__name__}: {exc}"
         )
         return
@@ -83,7 +101,6 @@ async def vvv(message: types.Message) -> None:
 
     await message.answer(
         "Bem-sucedido.\n\n"
-        "O Group Help fez besteira, então eu resetei a entrada desse usuário de forma segura.\n"
         "O usuário foi removido, liberado novamente e agora pode entrar pelo link direto abaixo.\n\n"
         f"Grupo: {chat_id}\n"
         f"Usuário: {user_id}\n"
