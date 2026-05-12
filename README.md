@@ -36,7 +36,7 @@ tocando, pifm, cyo, py, braya, dead, ag, rosan, roro, ro, rafarl, pipi, bressing
 
 ## Last.fm
 
-Para conectar:
+Para conectar no privado ou em grupo:
 
 ```text
 /lastfm username
@@ -48,7 +48,9 @@ Também aceita:
 /lastfm @username
 ```
 
-Para remover:
+Em grupo, o Last.fm é salvo para o usuário que enviou o comando, não para o grupo inteiro. Depois disso, `/playing` no grupo passa a usar o Last.fm daquele usuário, com Spotify como fallback.
+
+Para remover, também no privado ou em grupo:
 
 ```text
 /lastfmoff
