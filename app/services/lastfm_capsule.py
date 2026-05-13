@@ -14,9 +14,9 @@ from app.services.lastfm import lastfm_service
 
 logger = logging.getLogger(__name__)
 
-RECENT_LIMIT = 1000
-MAX_RECENT_PAGES = 10
-MAX_DURATION_LOOKUPS = 200
+RECENT_LIMIT = 200
+MAX_RECENT_PAGES = 20
+MAX_DURATION_LOOKUPS = 80
 HTTP_TIMEOUT_SECONDS = 8.0
 
 MONTH_NAMES_PT = {
@@ -228,7 +228,7 @@ class LastfmCapsuleService:
             if album and artist:
                 album_counts[(artist, album)] += 1
 
-        minutes, duration_lookups, covered_plays = await self._estimate_minutes(track_counts)
+        minutes, _, covered_plays = await self._estimate_minutes(track_counts)
 
         safe_name = html.escape(display_name or username)
         lines: list[str] = [
