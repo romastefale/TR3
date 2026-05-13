@@ -9,8 +9,7 @@ from sqlalchemy import text
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 
-from app.bot.private_tools import router as private_router, ddx_preprocess_update
-from app.handlers.lili_rodou import router as lili_rodou_router
+from app.bot.private_tools import ddx_preprocess_update
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
 from app.db.database import engine, init_db, run_migrations
@@ -48,8 +47,6 @@ async def on_startup() -> None:
     if TELEGRAM_BOT_TOKEN:
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
         if not _telegram_dispatcher_configured:
-            dispatcher.include_router(private_router)
-            dispatcher.include_router(lili_rodou_router)
             dispatcher.include_router(tigrao_router)
             dispatcher.include_router(tigrao_ddx_router)
             _register_handlers(dispatcher)
