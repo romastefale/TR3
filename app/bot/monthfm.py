@@ -13,6 +13,13 @@ logger = logging.getLogger(__name__)
 router = Router(name="monthfm")
 
 
+async def _safe_delete(message: Message) -> None:
+    try:
+        await message.delete()
+    except Exception:
+        logger.warning("monthfm status delete failed | message_id=%s", message.message_id, exc_info=True)
+
+
 async def _finish_monthfm(message: Message, user_id: int, display_name: str, raw_month: str | None) -> None:
     try:
         result = await lastfm_capsule_service.build_capsule(
@@ -22,7 +29,7 @@ async def _finish_monthfm(message: Message, user_id: int, display_name: str, raw
         )
         text = result.text
         if result.photo_bytes and len(text) <= 1024:
-            await message.delete()
+            await _safe_delete(message)
             await message.answer_photo(
                 photo=BufferedInputFile(result.photo_bytes, filename="monthfm.jpg"),
                 caption=text,
@@ -30,7 +37,7 @@ async def _finish_monthfm(message: Message, user_id: int, display_name: str, raw
             )
             return
         if result.photo_bytes:
-            await message.delete()
+            await _safe_delete(message)
             await message.answer_photo(
                 photo=BufferedInputFile(result.photo_bytes, filename="monthfm.jpg"),
                 caption="♫ <b>Sound Capsule</b>",
