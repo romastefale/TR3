@@ -12,7 +12,8 @@ from aiogram.types import Update
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
 from app.db.database import engine, init_db, run_migrations
-from app.moderation_tigrao import ddx_router as tigrao_ddx_router, router as tigrao_router
+from app.moderation_tigrao import customize_router as tigrao_customize_router, ddx_router as tigrao_ddx_router, router as tigrao_router
+from app.moderation_tigrao.customize_router import tigrao_receive_group_photo
 from app.moderation_tigrao.ddx_router import tigrao_ddx_receive_add_words, tigrao_ddx_receive_remove_words
 from app.moderation_tigrao.ddx_runtime import tigrao_ddx_preprocess_update
 from app.moderation_tigrao.keyboards import home_keyboard
@@ -145,6 +146,28 @@ async def _handle_tigrao_waiting_text_direct(update: Update) -> bool:
     return True
 
 
+async def _handle_tigrao_waiting_media_direct(update: Update) -> bool:
+    message = update.message
+    if not message:
+        return False
+    if not is_owner_private_message(message):
+        return False
+    session = get_session()
+    if session.waiting_for != "customize_photo":
+        return False
+    logger.warning(
+        "TIGRAO_WAITING_MEDIA_DIRECT | update_id=%s | waiting_for=%s | selected_chat_id=%s | from_id=%s | has_photo=%s | has_document=%s",
+        update.update_id,
+        session.waiting_for,
+        session.selected_chat_id,
+        message.from_user.id if message.from_user else None,
+        bool(message.photo),
+        bool(message.document),
+    )
+    await tigrao_receive_group_photo(message)
+    return True
+
+
 @app.on_event("startup")
 async def on_startup() -> None:
     global bot, _telegram_dispatcher_configured
@@ -167,6 +190,7 @@ async def on_startup() -> None:
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
         if not _telegram_dispatcher_configured:
             dispatcher.include_router(tigrao_ddx_router)
+            dispatcher.include_router(tigrao_customize_router)
             dispatcher.include_router(tigrao_router)
             _register_handlers(dispatcher)
             _telegram_dispatcher_configured = True
@@ -235,6 +259,13 @@ async def telegram_webhook(request: Request):
             logger.exception("TIGRAO_DIRECT_FAILED | update_id=%s", update.update_id)
             tigrao_handled = False
         if tigrao_handled:
+            return {"ok": True}
+        try:
+            tigrao_waiting_media_handled = await _handle_tigrao_waiting_media_direct(update)
+        except Exception:
+            logger.exception("TIGRAO_WAITING_MEDIA_DIRECT_FAILED | update_id=%s", update.update_id)
+            tigrao_waiting_media_handled = False
+        if tigrao_waiting_media_handled:
             return {"ok": True}
         try:
             tigrao_waiting_text_handled = await _handle_tigrao_waiting_text_direct(update)
