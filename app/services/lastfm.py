@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 DEEZER_SEARCH_URL = "https://api.deezer.com/search"
 DEEZER_COVER_TIMEOUT_SECONDS = 2.5
+LASTFM_TRACK_INFO_TIMEOUT_SECONDS = 2.5
 
 
 def _clean_username(username: str) -> str:
@@ -69,6 +70,14 @@ def _unique_queries(artist: str, track_name: str, album: str | None) -> list[str
     return result
 
 
+def _safe_int(value: Any) -> int | None:
+    try:
+        parsed = int(str(value).strip())
+    except Exception:
+        return None
+    return parsed if parsed >= 0 else None
+
+
 class LastfmService:
     async def set_username(self, user_id: int, username: str) -> str:
         clean = _clean_username(username)
@@ -96,6 +105,41 @@ class LastfmService:
         with SessionLocal() as db:
             profile = db.query(LastfmProfile).filter_by(user_id=user_id).first()
             return profile.username if profile else None
+
+    async def get_user_track_playcount(self, user_id: int, artist: str, track_name: str) -> int | None:
+        username = await self.get_username(user_id)
+        if not username or not LASTFM_API_KEY or not artist.strip() or not track_name.strip():
+            return None
+
+        params = {
+            "method": "track.getInfo",
+            "user": username,
+            "artist": artist,
+            "track": track_name,
+            "api_key": LASTFM_API_KEY,
+            "format": "json",
+            "autocorrect": "1",
+        }
+        try:
+            async with httpx.AsyncClient(timeout=LASTFM_TRACK_INFO_TIMEOUT_SECONDS) as client:
+                response = await client.get(LASTFM_API_BASE_URL, params=params)
+        except Exception:
+            logger.info("Last.fm track.getInfo failed silently | user_id=%s | artist=%s | track=%s", user_id, artist, track_name)
+            return None
+
+        if response.status_code != 200:
+            logger.info("Last.fm track.getInfo returned %s | user_id=%s | artist=%s | track=%s", response.status_code, user_id, artist, track_name)
+            return None
+
+        data = response.json()
+        track_data = data.get("track") if isinstance(data, dict) else None
+        if not isinstance(track_data, dict):
+            return None
+
+        user_playcount = _safe_int(track_data.get("userplaycount"))
+        if user_playcount is not None:
+            logger.info("Last.fm userplaycount matched | user_id=%s | artist=%s | track=%s | plays=%s", user_id, artist, track_name, user_playcount)
+        return user_playcount
 
     async def get_current_or_last_played(self, user_id: int) -> dict[str, Any] | None:
         username = await self.get_username(user_id)
