@@ -26,7 +26,8 @@ def home_keyboard() -> InlineKeyboardMarkup:
             [_button("Escolher grupo", "tigrao:groups", "primary")],
             [_button("Ações de usuário", "tigrao:user_actions", "primary"), _button("Links", "tigrao:links", "primary")],
             [_button("Filtros DDX", "tigrao:ddx", "primary"), _button("Mensagens", "tigrao:messages", "primary")],
-            [_button("Logs", "tigrao:logs", "primary"), _button("Fechar", "tigrao:close", "danger")],
+            [_button("Personalização", "tigrao:customize", "success"), _button("Logs", "tigrao:logs", "primary")],
+            [_button("Fechar", "tigrao:close", "danger")],
         ]
     )
 
@@ -71,11 +72,19 @@ def links_keyboard() -> InlineKeyboardMarkup:
 
 
 def messages_keyboard() -> InlineKeyboardMarkup:
+    rows = [[_button("Apagar por link", "tigrao:message:delete_link", "danger")]]
+    rows.extend(_back_close_rows())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def customize_keyboard() -> InlineKeyboardMarkup:
     rows = [
         [_button("Enviar mensagem", "tigrao:message:send", "primary")],
         [_button("Enviar e fixar", "tigrao:message:pin", "success")],
         [_button("Enviar mídia", "tigrao:message:media", "primary")],
-        [_button("Apagar por link", "tigrao:message:delete_link", "danger")],
+        [_button("Alterar foto do grupo", "tigrao:customize:photo", "success")],
+        [_button("Alterar nome", "tigrao:customize:title", "primary"), _button("Alterar bio", "tigrao:customize:bio", "primary")],
+        [_button("Tag de membro", "tigrao:customize:member_tag", "primary")],
     ]
     rows.extend(_back_close_rows())
     return InlineKeyboardMarkup(inline_keyboard=rows)
