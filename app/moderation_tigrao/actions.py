@@ -2,8 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
+import httpx
 from aiogram import Bot
 from aiogram.types import BufferedInputFile, ChatPermissions
+
+from app.config.settings import TELEGRAM_BOT_TOKEN
 
 
 def _full_permissions() -> ChatPermissions:
@@ -110,3 +113,21 @@ async def set_group_photo(bot: Bot, chat_id: int, image_bytes: bytes, filename: 
         chat_id=chat_id,
         photo=BufferedInputFile(image_bytes, filename=filename),
     )
+
+
+async def set_member_tag(bot: Bot, chat_id: int, user_id: int, tag: str) -> None:
+    if hasattr(bot, "set_chat_member_tag"):
+        await bot.set_chat_member_tag(chat_id=chat_id, user_id=user_id, tag=tag)  # type: ignore[attr-defined]
+        return
+
+    if not TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN ausente")
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/setChatMemberTag"
+    payload = {"chat_id": chat_id, "user_id": user_id, "tag": tag}
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(url, json=payload)
+    data = response.json()
+    if not data.get("ok"):
+        description = data.get("description") or response.text
+        raise RuntimeError(f"Telegram setChatMemberTag falhou: {description}")
