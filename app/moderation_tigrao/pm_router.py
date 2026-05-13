@@ -5,7 +5,7 @@ import re
 
 from aiogram import F, Router
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import BotCommand, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message, Update
 
 from app.config.settings import OWNER_ID
 from app.moderation_tigrao.actions import ban_user
@@ -118,6 +118,46 @@ async def _send_pm_alert(message: Message, snapshot_id: int, reason: str, text_v
     )
 
 
+async def process_tigrao_pm_message(message: Message) -> None:
+    if not message.from_user or message.from_user.is_bot:
+        return
+    if message.chat.type not in {"group", "supergroup"}:
+        return
+
+    chat_id = int(message.chat.id)
+    remember_group(chat_id, message.chat.title or str(chat_id))
+    if not is_pm_enabled(chat_id):
+        mark_member_seen(chat_id, int(message.from_user.id))
+        return
+
+    is_first_seen = mark_member_seen(chat_id, int(message.from_user.id))
+    if not is_first_seen and not is_recently_first_seen(chat_id, int(message.from_user.id), minutes=30):
+        return
+
+    text_value = _message_text(message)
+    reason = _detect_reason(text_value)
+    if not reason:
+        return
+
+    snapshot_id = save_suspicious_message(
+        chat_id=chat_id,
+        chat_title=message.chat.title or str(chat_id),
+        message_id=int(message.message_id),
+        user_id=int(message.from_user.id),
+        user_name=_user_name(message),
+        text_value=text_value,
+        reason=reason,
+    )
+    await _send_pm_alert(message, snapshot_id, reason, text_value)
+
+
+async def tigrao_pm_preprocess_update(update: Update) -> None:
+    message = update.message or update.edited_message
+    if not message:
+        return
+    await process_tigrao_pm_message(message)
+
+
 @router.message(Command("tigraopm"))
 async def tigrao_pm_command(message: Message) -> None:
     if not message.from_user or message.from_user.id != OWNER_ID:
@@ -222,34 +262,3 @@ async def tigrao_pm_ban(callback: CallbackQuery) -> None:
     except Exception as exc:
         update_suspicious_status(snapshot_id, f"ban_error:{type(exc).__name__}")
         await callback.answer(f"Erro: {type(exc).__name__}", show_alert=True)
-
-
-@router.message(F.chat.type.in_({"group", "supergroup"}))
-async def tigrao_pm_watch(message: Message) -> None:
-    if not message.from_user or message.from_user.is_bot:
-        return
-    chat_id = int(message.chat.id)
-    remember_group(chat_id, message.chat.title or str(chat_id))
-    if not is_pm_enabled(chat_id):
-        mark_member_seen(chat_id, int(message.from_user.id))
-        return
-
-    is_first_seen = mark_member_seen(chat_id, int(message.from_user.id))
-    if not is_first_seen and not is_recently_first_seen(chat_id, int(message.from_user.id), minutes=30):
-        return
-
-    text_value = _message_text(message)
-    reason = _detect_reason(text_value)
-    if not reason:
-        return
-
-    snapshot_id = save_suspicious_message(
-        chat_id=chat_id,
-        chat_title=message.chat.title or str(chat_id),
-        message_id=int(message.message_id),
-        user_id=int(message.from_user.id),
-        user_name=_user_name(message),
-        text_value=text_value,
-        reason=reason,
-    )
-    await _send_pm_alert(message, snapshot_id, reason, text_value)
