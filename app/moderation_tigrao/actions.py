@@ -95,3 +95,11 @@ async def copy_message(bot: Bot, target_chat_id: int, from_chat_id: int, message
             disable_notification=True,
         )
     return copied.message_id
+
+
+async def set_group_title(bot: Bot, chat_id: int, title: str) -> None:
+    await bot.set_chat_title(chat_id=chat_id, title=title)
+
+
+async def set_group_description(bot: Bot, chat_id: int, description: str) -> None:
+    await bot.set_chat_description(chat_id=chat_id, description=description)
