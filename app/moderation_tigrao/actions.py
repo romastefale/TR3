@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from aiogram import Bot
-from aiogram.types import ChatPermissions
+from aiogram.types import BufferedInputFile, ChatPermissions
 
 
 def _full_permissions() -> ChatPermissions:
@@ -103,3 +103,10 @@ async def set_group_title(bot: Bot, chat_id: int, title: str) -> None:
 
 async def set_group_description(bot: Bot, chat_id: int, description: str) -> None:
     await bot.set_chat_description(chat_id=chat_id, description=description)
+
+
+async def set_group_photo(bot: Bot, chat_id: int, image_bytes: bytes, filename: str = "group_photo.jpg") -> None:
+    await bot.set_chat_photo(
+        chat_id=chat_id,
+        photo=BufferedInputFile(image_bytes, filename=filename),
+    )
