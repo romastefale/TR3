@@ -68,12 +68,14 @@ def _playing_keyboard(
     total_plays: int,
     total_likes: int,
     liked: bool,
+    plays_source: str = "local",
 ) -> InlineKeyboardMarkup:
     heart = "♥" if liked else "♡"
+    plays_style = "primary" if plays_source == "lastfm" else "success"
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
-                _safe_button(f"♫ {total_plays}", f"plays:{owner_user_id}:{track_id}", style="primary"),
+                _safe_button(f"♫ {total_plays}", f"plays:{owner_user_id}:{plays_source}:{track_id}", style=plays_style),
                 _safe_button(f"{heart} {total_likes}", f"like:{owner_user_id}:{track_id}", style="danger"),
             ]
         ]
@@ -95,11 +97,11 @@ def _user_mention(message: Message) -> str:
     return f'<a href="tg://user?id={message.from_user.id}">{display_name}</a>'
 
 
-async def _resolve_play_button_count(user_id: int, track_id: str, artist: str, track_name: str) -> int:
+async def _resolve_play_button_count(user_id: int, track_id: str, artist: str, track_name: str) -> tuple[int, str]:
     lastfm_count = await lastfm_service.get_user_track_playcount(user_id, artist, track_name)
     if lastfm_count is not None:
-        return lastfm_count
-    return await likes_service.get_track_play_count(track_id)
+        return lastfm_count, "lastfm"
+    return await likes_service.get_track_play_count(track_id), "local"
 
 
 async def _send_playing(message: Message) -> None:
@@ -120,7 +122,7 @@ async def _send_playing(message: Message) -> None:
     artist_raw = str(track.get("artist") or "").strip()
     await likes_service.register_play(user_id, track_id, track_name=track_name_raw, artist_name=artist_raw)
 
-    total_plays = await _resolve_play_button_count(user_id, track_id, artist_raw, track_name_raw)
+    total_plays, plays_source = await _resolve_play_button_count(user_id, track_id, artist_raw, track_name_raw)
     total_likes = await likes_service.get_total_likes(track_id, owner_user_id=user_id)
     user_total_likes = await likes_service.get_user_received_likes(user_id)
     liked = await likes_service.is_track_liked(user_id, track_id, owner_user_id=user_id)
@@ -133,7 +135,7 @@ async def _send_playing(message: Message) -> None:
         f"<b><a href=\"{html.escape(user_link)}\">{display_name}</a></b> · ♥ <code>{user_total_likes}</code>\n\n"
         f"♫ <b>{track_part}</b> — <i>{artist}</i>"
     )
-    keyboard = _playing_keyboard(track_id, user_id, total_plays, total_likes, liked)
+    keyboard = _playing_keyboard(track_id, user_id, total_plays, total_likes, liked, plays_source)
 
     if cover:
         await message.answer_photo(photo=cover, caption=caption, parse_mode="HTML", reply_markup=keyboard)
@@ -301,18 +303,30 @@ def _register_handlers(dp: Dispatcher) -> None:
     async def plays_callback(query: CallbackQuery) -> None:
         if not query.from_user or not query.data:
             return
-        parts = query.data.split(":", 2)
-        if len(parts) == 3:
+        parts = query.data.split(":", 3)
+        if len(parts) == 4:
             try:
                 owner_user_id = int(parts[1])
             except ValueError:
                 owner_user_id = query.from_user.id
+            plays_source = parts[2]
+            track_id = parts[3]
+        elif len(parts) == 3:
+            try:
+                owner_user_id = int(parts[1])
+            except ValueError:
+                owner_user_id = query.from_user.id
+            plays_source = "local"
             track_id = parts[2]
         else:
             owner_user_id = query.from_user.id
+            plays_source = "local"
             track_id = query.data.split(":", 1)[1]
         count = await likes_service.get_user_play_count(owner_user_id, track_id)
-        await query.answer(f"O dono já ouviu {count} vez" + ("" if count == 1 else "es") + " pelo bot.", show_alert=True)
+        if plays_source == "lastfm":
+            await query.answer("O número azul é o total do Last.fm.\nPelo bot: " + str(count) + " vez" + ("" if count == 1 else "es") + ".", show_alert=True)
+        else:
+            await query.answer(f"O dono já ouviu {count} vez" + ("" if count == 1 else "es") + " pelo bot.", show_alert=True)
 
     @dp.callback_query(F.data.startswith("like:"))
     async def like_callback(query: CallbackQuery) -> None:
@@ -332,7 +346,7 @@ def _register_handlers(dp: Dispatcher) -> None:
         local_plays = await likes_service.get_track_play_count(track_id)
         total_likes = await likes_service.get_total_likes(track_id, owner_user_id=owner_user_id)
         try:
-            await query.message.edit_reply_markup(reply_markup=_playing_keyboard(track_id, owner_user_id, local_plays, total_likes, liked))  # type: ignore[union-attr]
+            await query.message.edit_reply_markup(reply_markup=_playing_keyboard(track_id, owner_user_id, local_plays, total_likes, liked, "local"))  # type: ignore[union-attr]
         except Exception:
             logger.exception("Failed to edit like markup")
         await query.answer()
