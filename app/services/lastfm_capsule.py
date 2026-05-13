@@ -233,41 +233,43 @@ class LastfmCapsuleService:
         safe_name = html.escape(display_name or username)
         lines: list[str] = [
             f"♫ <b>{html.escape(spec.label)} Sound Capsule</b>",
+            f"<i>{safe_name} · Last.fm mensal</i>",
             "",
-            f"<b>{safe_name}</b> · Last.fm mensal",
-            "",
-            "★ <b>Top artistas</b>",
+            "✦ <b>Top artistas</b>",
         ]
 
         for idx, (artist, count) in enumerate(artist_counts.most_common(5), 1):
-            lines.append(f"{idx}. {html.escape(_shorten(artist))} — <code>{_format_number(count)}</code>")
+            lines.append(f"<b>{idx}.</b> {html.escape(_shorten(artist))} <i>— {_format_number(count)} scrobbles</i>")
 
         lines.extend(["", "♫ <b>Top músicas</b>"])
         for idx, ((artist, track), count) in enumerate(track_counts.most_common(5), 1):
-            label = f"{track} — {artist}"
-            lines.append(f"{idx}. {html.escape(_shorten(label, 48))} — <code>{_format_number(count)}</code>")
+            lines.append(
+                f"<b>{idx}.</b> <b>{html.escape(_shorten(track, 36))}</b> "
+                f"— <i>{html.escape(_shorten(artist, 24))}</i> "
+                f"<code>{_format_number(count)}</code>"
+            )
 
-        lines.extend(["", "◎ <b>Disco mais ouvido</b>"])
+        lines.extend(["", "◌ <b>Disco mais ouvido</b>"])
         if album_counts:
             (album_artist, album_name), album_count = album_counts.most_common(1)[0]
-            lines.append(f"{html.escape(_shorten(album_name, 44))} — {html.escape(_shorten(album_artist, 30))}")
-            lines.append(f"<code>{_format_number(album_count)}</code> scrobbles")
+            lines.append(f"<b>{html.escape(_shorten(album_name, 44))}</b>")
+            lines.append(f"<i>{html.escape(_shorten(album_artist, 30))}</i> · <code>{_format_number(album_count)}</code> scrobbles")
         else:
-            lines.append("Sem álbum identificado nos scrobbles do mês.")
+            lines.append("<i>Sem álbum identificado nos scrobbles do mês.</i>")
 
         lines.extend(["", "⌁ <b>Total do mês</b>"])
-        lines.append(f"<code>{_format_number(total_reported)}</code> scrobbles")
+        lines.append(f"<b>{_format_number(total_reported)}</b> scrobbles")
         if minutes is not None:
             coverage_note = ""
             if covered_plays and total_reported:
                 coverage = round((covered_plays / max(total_reported, 1)) * 100)
-                coverage_note = f" · cobertura {coverage}%"
-            lines.append(f"aprox. <code>{_format_number(minutes)}</code> minutos ouvidos{coverage_note}")
+                coverage_note = f" · <i>cobertura {coverage}%</i>"
+            lines.append(f"<i>aprox.</i> <b>{_format_number(minutes)}</b> minutos ouvidos{coverage_note}")
         else:
-            lines.append("minutos ouvidos indisponíveis")
+            lines.append("<i>minutos ouvidos indisponíveis</i>")
 
         if capped:
-            lines.extend(["", "Resultado parcial: o mês tem mais scrobbles do que o limite seguro de leitura do bot."])
+            lines.extend(["", "<i>Resultado parcial: o mês tem mais scrobbles do que o limite seguro de leitura do bot.</i>"])
 
         return "\n".join(lines)
 
