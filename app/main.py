@@ -19,6 +19,7 @@ from app.moderation_tigrao.ddx_runtime import tigrao_ddx_preprocess_update
 from app.moderation_tigrao.keyboards import home_keyboard
 from app.moderation_tigrao.member_tag_router import tigrao_member_tag_receive_text
 from app.moderation_tigrao.permissions import is_owner_private_message
+from app.moderation_tigrao.pm_router import tigrao_pm_command
 from app.moderation_tigrao.pm_storage import cleanup_old_suspicious_messages, init_tigrao_pm_tables
 from app.moderation_tigrao.router import tigrao_private_text
 from app.moderation_tigrao.state import get_session
@@ -54,10 +55,17 @@ def _first_token(text_value: str | None) -> str:
     return text_value.strip().split(maxsplit=1)[0]
 
 
-def _is_tigrao_command(text_value: str | None) -> bool:
+def _command_name(text_value: str | None) -> str:
     token = _first_token(text_value).lower()
-    command = token.split("@", 1)[0]
-    return command == "/tigrao"
+    return token.split("@", 1)[0]
+
+
+def _is_tigrao_command(text_value: str | None) -> bool:
+    return _command_name(text_value) == "/tigrao"
+
+
+def _is_tigraopm_command(text_value: str | None) -> bool:
+    return _command_name(text_value) == "/tigraopm"
 
 
 def _log_message_update(update: Update) -> None:
@@ -120,6 +128,31 @@ async def _handle_tigrao_direct(update: Update) -> bool:
     )
     await message.answer(home_text(), reply_markup=home_keyboard())
     logger.warning("TIGRAO_DIRECT_ANSWER_SENT | update_id=%s", update.update_id)
+    return True
+
+
+async def _handle_tigraopm_direct(update: Update) -> bool:
+    message = update.message
+    if not message or not _is_tigraopm_command(message.text):
+        return False
+    logger.warning(
+        "TIGRAOPM_DIRECT_RECEIVED | update_id=%s | chat_type=%s | chat_id=%s | from_id=%s | token=%s",
+        update.update_id,
+        getattr(message.chat, "type", None),
+        getattr(message.chat, "id", None),
+        getattr(message.from_user, "id", None),
+        _first_token(message.text),
+    )
+    if not is_owner_private_message(message):
+        logger.warning(
+            "TIGRAOPM_DIRECT_DENIED | update_id=%s | chat_type=%s | from_id=%s",
+            update.update_id,
+            getattr(message.chat, "type", None),
+            getattr(message.from_user, "id", None),
+        )
+        return True
+    await tigrao_pm_command(message)
+    logger.warning("TIGRAOPM_DIRECT_ANSWER_SENT | update_id=%s", update.update_id)
     return True
 
 
@@ -269,6 +302,13 @@ async def telegram_webhook(request: Request):
             logger.exception("TIGRAO_DIRECT_FAILED | update_id=%s", update.update_id)
             tigrao_handled = False
         if tigrao_handled:
+            return {"ok": True}
+        try:
+            tigraopm_handled = await _handle_tigraopm_direct(update)
+        except Exception:
+            logger.exception("TIGRAOPM_DIRECT_FAILED | update_id=%s", update.update_id)
+            tigraopm_handled = False
+        if tigraopm_handled:
             return {"ok": True}
         try:
             tigrao_waiting_media_handled = await _handle_tigrao_waiting_media_direct(update)
