@@ -345,7 +345,10 @@ def _register_handlers(dp: Dispatcher) -> None:
 
     @dp.message(F.text)
     async def text_aliases(message: Message) -> None:
-        if detect_intent(message.text or "") == "play":
+        text = message.text or ""
+        if text.lstrip().startswith("/"):
+            return
+        if detect_intent(text) == "play":
             await _send_playing(message)
 
 
