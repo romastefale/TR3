@@ -19,6 +19,7 @@ from app.moderation_tigrao.actions import (
 )
 from app.moderation_tigrao.keyboards import (
     confirm_keyboard,
+    customize_keyboard,
     ddx_keyboard,
     groups_keyboard,
     home_keyboard,
@@ -177,7 +178,7 @@ async def tigrao_private_text(message: Message) -> None:
             return
         text_to_send = message.text or ""
         if not text_to_send.strip():
-            await message.answer(error_text("Texto vazio", "Não há texto para enviar.", "Envie uma mensagem de texto válida."), reply_markup=messages_keyboard())
+            await message.answer(error_text("Texto vazio", "Não há texto para enviar.", "Envie uma mensagem de texto válida."), reply_markup=customize_keyboard())
             return
         action = "send_text_pin" if session.payload.get("pin") else "send_text"
         try:
@@ -191,16 +192,16 @@ async def tigrao_private_text(message: Message) -> None:
                     "Mensagem enviada" if action == "send_text" else "Mensagem enviada e fixada",
                     f"Grupo: {session.selected_chat_id}\nMensagem: {sent.message_id}",
                 ),
-                reply_markup=messages_keyboard(),
+                reply_markup=customize_keyboard(),
             )
         except TelegramForbiddenError as exc:
             log_action(chat_id=int(session.selected_chat_id), action=action, status="error", error_type=type(exc).__name__, error_message=str(exc))
             clear_action()
-            await message.answer(error_text("Permissão insuficiente", "O Telegram recusou o envio ou fixação da mensagem.", "Confira se o bot pode enviar e fixar mensagens no grupo."), reply_markup=messages_keyboard())
+            await message.answer(error_text("Permissão insuficiente", "O Telegram recusou o envio ou fixação da mensagem.", "Confira se o bot pode enviar e fixar mensagens no grupo."), reply_markup=customize_keyboard())
         except Exception as exc:
             log_action(chat_id=int(session.selected_chat_id), action=action, status="error", error_type=type(exc).__name__, error_message=str(exc))
             clear_action()
-            await message.answer(error_text("Falha ao enviar", f"{type(exc).__name__}: {exc}", "Confira grupo, texto e permissões do bot."), reply_markup=messages_keyboard())
+            await message.answer(error_text("Falha ao enviar", f"{type(exc).__name__}: {exc}", "Confira grupo, texto e permissões do bot."), reply_markup=customize_keyboard())
         return
 
     if session.waiting_for == "message_link":
@@ -276,15 +277,15 @@ async def tigrao_private_media(message: Message) -> None:
         )
         log_action(chat_id=int(session.selected_chat_id), action="send_media", status="success")
         clear_action()
-        await message.answer(success_text("Mídia enviada", f"Grupo: {session.selected_chat_id}\nMensagem: {copied_id}"), reply_markup=messages_keyboard())
+        await message.answer(success_text("Mídia enviada", f"Grupo: {session.selected_chat_id}\nMensagem: {copied_id}"), reply_markup=customize_keyboard())
     except TelegramForbiddenError as exc:
         log_action(chat_id=int(session.selected_chat_id), action="send_media", status="error", error_type=type(exc).__name__, error_message=str(exc))
         clear_action()
-        await message.answer(error_text("Permissão insuficiente", "O Telegram recusou o envio da mídia.", "Confira se o bot pode enviar mídia no grupo."), reply_markup=messages_keyboard())
+        await message.answer(error_text("Permissão insuficiente", "O Telegram recusou o envio da mídia.", "Confira se o bot pode enviar mídia no grupo."), reply_markup=customize_keyboard())
     except Exception as exc:
         log_action(chat_id=int(session.selected_chat_id), action="send_media", status="error", error_type=type(exc).__name__, error_message=str(exc))
         clear_action()
-        await message.answer(error_text("Falha ao enviar mídia", f"{type(exc).__name__}: {exc}", "Confira grupo, mídia e permissões do bot."), reply_markup=messages_keyboard())
+        await message.answer(error_text("Falha ao enviar mídia", f"{type(exc).__name__}: {exc}", "Confira grupo, mídia e permissões do bot."), reply_markup=customize_keyboard())
 
 
 @router.callback_query(F.data == "tigrao:home")
@@ -516,7 +517,19 @@ async def tigrao_create_link(callback: CallbackQuery) -> None:
 
 @router.callback_query(F.data == "tigrao:messages")
 async def tigrao_messages(callback: CallbackQuery) -> None:
-    await _edit_private_panel(callback, _section_text("mensagens", "Envio, fixação ou remoção de mensagens usando apenas o privado do dono."), messages_keyboard())
+    await _edit_private_panel(callback, _section_text("mensagens", "Use esta seção somente para apagar mensagens por link."), messages_keyboard())
+
+
+@router.callback_query(F.data == "tigrao:customize")
+async def tigrao_customize(callback: CallbackQuery) -> None:
+    await _edit_private_panel(
+        callback,
+        _section_text(
+            "personalização",
+            "Envio de conteúdo e alterações de dados do grupo selecionado. Foto, nome, bio e tag serão ligados por etapas.",
+        ),
+        customize_keyboard(),
+    )
 
 
 @router.callback_query(F.data == "tigrao:message:send")
