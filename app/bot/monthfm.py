@@ -5,7 +5,7 @@ import logging
 
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import Message
+from aiogram.types import BufferedInputFile, Message
 
 from app.services.lastfm_capsule import lastfm_capsule_service
 
@@ -15,11 +15,29 @@ router = Router(name="monthfm")
 
 async def _finish_monthfm(message: Message, user_id: int, display_name: str, raw_month: str | None) -> None:
     try:
-        text = await lastfm_capsule_service.build_capsule_text(
+        result = await lastfm_capsule_service.build_capsule(
             user_id=user_id,
             display_name=display_name,
             raw_month=raw_month,
         )
+        text = result.text
+        if result.photo_bytes and len(text) <= 1024:
+            await message.delete()
+            await message.answer_photo(
+                photo=BufferedInputFile(result.photo_bytes, filename="monthfm.jpg"),
+                caption=text,
+                parse_mode="HTML",
+            )
+            return
+        if result.photo_bytes:
+            await message.delete()
+            await message.answer_photo(
+                photo=BufferedInputFile(result.photo_bytes, filename="monthfm.jpg"),
+                caption="♫ <b>Sound Capsule</b>",
+                parse_mode="HTML",
+            )
+            await message.answer(text, parse_mode="HTML")
+            return
         if len(text) <= 3900:
             await message.edit_text(text, parse_mode="HTML")
         else:
