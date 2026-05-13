@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import html
 import re
-from datetime import datetime
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -11,6 +10,7 @@ from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMar
 from app.config.settings import OWNER_ID
 from app.moderation_tigrao.actions import ban_user
 from app.moderation_tigrao.pm_storage import (
+    delete_suspicious_message,
     get_suspicious_message,
     is_pm_enabled,
     is_recently_first_seen,
@@ -192,8 +192,9 @@ async def tigrao_pm_ignore(callback: CallbackQuery) -> None:
         await callback.answer("Registro inválido.", show_alert=True)
         return
     update_suspicious_status(snapshot_id, "ignored")
+    delete_suspicious_message(snapshot_id)
     if callback.message:
-        await callback.message.edit_text((callback.message.text or "") + "\n\nStatus: ignorado.")
+        await callback.message.edit_text((callback.message.text or "") + "\n\nStatus: ignorado. Dados locais removidos.")
     await callback.answer("Ignorado")
 
 
@@ -214,8 +215,9 @@ async def tigrao_pm_ban(callback: CallbackQuery) -> None:
     try:
         await ban_user(callback.bot, int(snapshot["chat_id"]), int(snapshot["user_id"]))
         update_suspicious_status(snapshot_id, "banned")
+        delete_suspicious_message(snapshot_id)
         if callback.message:
-            await callback.message.edit_text((callback.message.text or "") + "\n\nStatus: banido e mensagens removidas.")
+            await callback.message.edit_text((callback.message.text or "") + "\n\nStatus: banido, mensagens removidas e dados locais apagados.")
         await callback.answer("Banido")
     except Exception as exc:
         update_suspicious_status(snapshot_id, f"ban_error:{type(exc).__name__}")
