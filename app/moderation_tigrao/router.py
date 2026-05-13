@@ -14,6 +14,8 @@ from app.moderation_tigrao.actions import (
     delete_message,
     mute_user,
     reset_entry,
+    set_group_description,
+    set_group_title,
     unban_user,
     unmute_user,
 )
@@ -45,7 +47,7 @@ ACTION_LABELS = {
     "reset": "Resetar entrada",
 }
 SIMPLE_EXECUTABLE_ACTIONS = {"ban", "unban", "unmute", "approve", "reset"}
-TEXT_WAITING_STATES = {"chat_id", "outbound_text", "message_link", "user_id", "duration"}
+TEXT_WAITING_STATES = {"chat_id", "outbound_text", "message_link", "user_id", "duration", "customize_title", "customize_bio"}
 
 
 def _section_text(title: str, detail: str) -> str:
@@ -170,6 +172,49 @@ async def tigrao_private_text(message: Message) -> None:
         remember_group(chat_id, str(chat_id))
         set_selected_group(chat_id, str(chat_id))
         await message.answer(success_text("Grupo selecionado", f"Grupo: {chat_id}"), reply_markup=home_keyboard())
+        return
+
+    if session.waiting_for == "customize_title":
+        if not session.selected_chat_id:
+            await message.answer(_need_group_text(), reply_markup=home_keyboard())
+            return
+        new_title = (message.text or "").strip()
+        if not new_title:
+            await message.answer(error_text("Nome vazio", "Não há nome para aplicar.", "Envie um nome válido para o grupo."), reply_markup=customize_keyboard())
+            return
+        try:
+            await set_group_title(message.bot, int(session.selected_chat_id), new_title)
+            log_action(chat_id=int(session.selected_chat_id), action="customize_title", status="success")
+            clear_action()
+            await message.answer(success_text("Nome alterado", f"Grupo: {session.selected_chat_id}\nNovo nome: {new_title}"), reply_markup=customize_keyboard())
+        except TelegramForbiddenError as exc:
+            log_action(chat_id=int(session.selected_chat_id), action="customize_title", status="error", error_type=type(exc).__name__, error_message=str(exc))
+            clear_action()
+            await message.answer(error_text("Permissão insuficiente", f"O Telegram recusou a alteração do nome. Erro: {type(exc).__name__}: {exc}", "Confira se o bot é administrador e possui permissão para alterar informações do grupo."), reply_markup=customize_keyboard())
+        except Exception as exc:
+            log_action(chat_id=int(session.selected_chat_id), action="customize_title", status="error", error_type=type(exc).__name__, error_message=str(exc))
+            clear_action()
+            await message.answer(error_text("Falha ao alterar nome", f"{type(exc).__name__}: {exc}", "Confira o nome, grupo e permissões do bot."), reply_markup=customize_keyboard())
+        return
+
+    if session.waiting_for == "customize_bio":
+        if not session.selected_chat_id:
+            await message.answer(_need_group_text(), reply_markup=home_keyboard())
+            return
+        new_bio = (message.text or "").strip()
+        try:
+            await set_group_description(message.bot, int(session.selected_chat_id), new_bio)
+            log_action(chat_id=int(session.selected_chat_id), action="customize_bio", status="success")
+            clear_action()
+            await message.answer(success_text("Bio alterada", f"Grupo: {session.selected_chat_id}\nCaracteres: {len(new_bio)}"), reply_markup=customize_keyboard())
+        except TelegramForbiddenError as exc:
+            log_action(chat_id=int(session.selected_chat_id), action="customize_bio", status="error", error_type=type(exc).__name__, error_message=str(exc))
+            clear_action()
+            await message.answer(error_text("Permissão insuficiente", f"O Telegram recusou a alteração da bio. Erro: {type(exc).__name__}: {exc}", "Confira se o bot é administrador e possui permissão para alterar informações do grupo."), reply_markup=customize_keyboard())
+        except Exception as exc:
+            log_action(chat_id=int(session.selected_chat_id), action="customize_bio", status="error", error_type=type(exc).__name__, error_message=str(exc))
+            clear_action()
+            await message.answer(error_text("Falha ao alterar bio", f"{type(exc).__name__}: {exc}", "Confira a bio, grupo e permissões do bot."), reply_markup=customize_keyboard())
         return
 
     if session.waiting_for == "outbound_text":
@@ -501,7 +546,7 @@ async def tigrao_create_link(callback: CallbackQuery) -> None:
         clear_action()
         if callback.message:
             await callback.message.edit_text(
-                error_text("Permissão insuficiente", "O Telegram recusou a criação do link.", "Confira se o bot é administrador do grupo e pode criar links de convite."),
+                error_text("Permissão insuficiente", "O Telegram recusou a criação do link.", "Confira se o bot é administrador e pode criar links de convite."),
                 reply_markup=links_keyboard(),
             )
     except Exception as exc:
@@ -526,10 +571,53 @@ async def tigrao_customize(callback: CallbackQuery) -> None:
         callback,
         _section_text(
             "personalização",
-            "Envio de conteúdo e alterações de dados do grupo selecionado. Foto, nome, bio e tag serão ligados por etapas.",
+            "Envio de conteúdo e alterações de dados do grupo selecionado. Foto e tag serão ligadas por etapas.",
         ),
         customize_keyboard(),
     )
+
+
+@router.callback_query(F.data == "tigrao:customize:title")
+async def tigrao_customize_title(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    session = get_session()
+    if not session.selected_chat_id:
+        if callback.message:
+            await callback.message.edit_text(_need_group_text(), reply_markup=home_keyboard())
+        await callback.answer()
+        return
+    set_action("customize_title", waiting_for="customize_title")
+    if callback.message:
+        await callback.message.edit_text(
+            "Tigrão — alterar nome\n\n"
+            f"Grupo: {session.selected_chat_id}\n\n"
+            "Envie agora o novo nome do grupo."
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tigrao:customize:bio")
+async def tigrao_customize_bio(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    session = get_session()
+    if not session.selected_chat_id:
+        if callback.message:
+            await callback.message.edit_text(_need_group_text(), reply_markup=home_keyboard())
+        await callback.answer()
+        return
+    set_action("customize_bio", waiting_for="customize_bio")
+    if callback.message:
+        await callback.message.edit_text(
+            "Tigrão — alterar bio\n\n"
+            f"Grupo: {session.selected_chat_id}\n\n"
+            "Envie agora a nova bio/descrição do grupo.\n"
+            "Para apagar a bio, envie apenas um ponto: ."
+        )
+    await callback.answer()
 
 
 @router.callback_query(F.data == "tigrao:message:send")
