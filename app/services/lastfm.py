@@ -50,6 +50,25 @@ def _looks_like_match(expected: str, found: str) -> bool:
     return expected_norm == found_norm or expected_norm in found_norm or found_norm in expected_norm
 
 
+def _unique_queries(artist: str, track_name: str, album: str | None) -> list[str]:
+    queries = [
+        f'artist:"{artist}" track:"{track_name}"',
+        f"{artist} {track_name}",
+    ]
+    if album:
+        queries.append(f'artist:"{artist}" album:"{album}"')
+        queries.append(f"{artist} {album} {track_name}")
+    seen: set[str] = set()
+    result: list[str] = []
+    for query in queries:
+        clean = re.sub(r"\s+", " ", query).strip()
+        key = clean.lower()
+        if clean and key not in seen:
+            seen.add(key)
+            result.append(clean)
+    return result
+
+
 class LastfmService:
     async def set_username(self, user_id: int, username: str) -> str:
         clean = _clean_username(username)
@@ -118,37 +137,48 @@ class LastfmService:
         return str(value or "").strip()
 
     async def _find_deezer_cover(self, *, artist: str, track_name: str, album: str | None = None) -> str | None:
-        query_parts = [f'artist:"{artist}"', f'track:"{track_name}"']
-        if album:
-            query_parts.append(f'album:"{album}"')
-        params = {"q": " ".join(query_parts), "limit": "5"}
+        queries = _unique_queries(artist, track_name, album)
 
         try:
             async with httpx.AsyncClient(timeout=DEEZER_COVER_TIMEOUT_SECONDS) as client:
-                response = await client.get(DEEZER_SEARCH_URL, params=params)
+                for query in queries:
+                    response = await client.get(DEEZER_SEARCH_URL, params={"q": query, "limit": "10"})
+                    if response.status_code != 200:
+                        logger.info(
+                            "Deezer cover lookup returned %s | artist=%s | track=%s | query=%s",
+                            response.status_code,
+                            artist,
+                            track_name,
+                            query,
+                        )
+                        continue
+
+                    data = response.json()
+                    items = data.get("data") or []
+                    if not isinstance(items, list):
+                        continue
+
+                    for item in items:
+                        if not isinstance(item, dict):
+                            continue
+                        found_title = str(item.get("title") or "")
+                        found_artist = str((item.get("artist") or {}).get("name") or "")
+                        if not _looks_like_match(track_name, found_title) or not _looks_like_match(artist, found_artist):
+                            continue
+                        album_data = item.get("album") or {}
+                        cover = album_data.get("cover_big") or album_data.get("cover_medium")
+                        if cover:
+                            logger.info(
+                                "Deezer cover matched | artist=%s | track=%s | query=%s | cover=%s",
+                                artist,
+                                track_name,
+                                query,
+                                cover,
+                            )
+                            return str(cover)
         except Exception:
             logger.info("Deezer cover lookup failed silently | artist=%s | track=%s", artist, track_name)
             return None
-
-        if response.status_code != 200:
-            logger.info("Deezer cover lookup returned %s | artist=%s | track=%s", response.status_code, artist, track_name)
-            return None
-
-        data = response.json()
-        items = data.get("data") or []
-        if not isinstance(items, list):
-            return None
-
-        for item in items:
-            if not isinstance(item, dict):
-                continue
-            found_title = str(item.get("title") or "")
-            found_artist = str((item.get("artist") or {}).get("name") or "")
-            if not _looks_like_match(track_name, found_title) or not _looks_like_match(artist, found_artist):
-                continue
-            cover = (item.get("album") or {}).get("cover_big")
-            if cover:
-                return str(cover)
         return None
 
     async def _map_track(self, username: str, item: dict[str, Any]) -> dict[str, Any] | None:
@@ -174,6 +204,14 @@ class LastfmService:
         deezer_cover = await self._find_deezer_cover(artist=artist, track_name=track_name, album=album or None)
         if deezer_cover:
             cover = deezer_cover
+        logger.info(
+            "Last.fm track mapped | username=%s | artist=%s | track=%s | cover_source=%s | cover=%s",
+            username,
+            artist,
+            track_name,
+            "deezer" if deezer_cover else "lastfm",
+            cover,
+        )
 
         track_url = item.get("url") or f"https://www.last.fm/user/{quote(username)}/library"
         album_url = f"https://www.last.fm/music/{quote(artist)}/{quote(album)}" if album else track_url
