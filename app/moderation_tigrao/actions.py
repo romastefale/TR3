@@ -105,7 +105,8 @@ async def set_group_title(bot: Bot, chat_id: int, title: str) -> None:
 
 
 async def set_group_description(bot: Bot, chat_id: int, description: str) -> None:
-    await bot.set_chat_description(chat_id=chat_id, description=description)
+    normalized = "" if description.strip() == "." else description
+    await bot.set_chat_description(chat_id=chat_id, description=normalized)
 
 
 async def set_group_photo(bot: Bot, chat_id: int, image_bytes: bytes, filename: str = "group_photo.jpg") -> None:
