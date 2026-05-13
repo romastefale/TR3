@@ -258,13 +258,14 @@ class LastfmCapsuleService:
             return None, looked_up, covered_plays
         return round(total_seconds / 60), looked_up, covered_plays
 
-    async def _build_collage(self, top_tracks: list[tuple[tuple[str, str], int]]) -> bytes | None:
+    async def _build_collage(self, top_tracks: list[tuple[tuple[str, str], int]], image_urls: dict[tuple[str, str], str]) -> bytes | None:
         if len(top_tracks) < MIN_COLLAGE_COVERS:
             return None
         covers: list[Image.Image] = []
         async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS, follow_redirects=True) as client:
             for (artist, track), _ in top_tracks[:MIN_COLLAGE_COVERS]:
-                url = await self._track_image_url(client, artist, track)
+                key = _track_key(artist, track)
+                url = image_urls.get(key) or await self._track_image_url(client, artist, track)
                 if not url:
                     return None
                 try:
@@ -308,19 +309,24 @@ class LastfmCapsuleService:
         track_counts: Counter[tuple[str, str]] = Counter()
         artist_counts: Counter[str] = Counter()
         album_counts: Counter[tuple[str, str]] = Counter()
+        image_urls: dict[tuple[str, str], str] = {}
 
         for item in recent_items:
             track = _text(item.get("name"))
             artist = _text(item.get("artist"))
             album = _text(item.get("album"))
             if track and artist:
-                track_counts[_track_key(artist, track)] += 1
+                key = _track_key(artist, track)
+                track_counts[key] += 1
                 artist_counts[artist] += 1
+                image_url = _best_image_url(item.get("image"))
+                if image_url and key not in image_urls:
+                    image_urls[key] = image_url
             if album and artist:
                 album_counts[(artist, album)] += 1
 
         minutes, _, covered_plays = await self._estimate_minutes(track_counts)
-        photo_bytes = await self._build_collage(track_counts.most_common(MIN_COLLAGE_COVERS))
+        photo_bytes = await self._build_collage(track_counts.most_common(MIN_COLLAGE_COVERS), image_urls)
 
         safe_name = html.escape(display_name or username)
         lines: list[str] = [
