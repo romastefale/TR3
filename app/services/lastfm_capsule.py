@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import io
 import logging
 from collections import Counter
 from dataclasses import dataclass
@@ -8,6 +9,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
+from PIL import Image, ImageDraw
 
 from app.config.settings import LASTFM_API_BASE_URL, LASTFM_API_KEY
 from app.services.lastfm import lastfm_service
@@ -18,6 +20,9 @@ RECENT_LIMIT = 200
 MAX_RECENT_PAGES = 20
 MAX_DURATION_LOOKUPS = 80
 HTTP_TIMEOUT_SECONDS = 8.0
+COLLAGE_SIZE = 1024
+COVER_SIZE = COLLAGE_SIZE // 2
+MIN_COLLAGE_COVERS = 4
 
 MONTH_NAMES_PT = {
     1: "janeiro",
@@ -42,6 +47,12 @@ class MonthSpec:
     label: str
     start_ts: int
     end_ts: int
+
+
+@dataclass(frozen=True)
+class CapsuleResult:
+    text: str
+    photo_bytes: bytes | None = None
 
 
 def parse_month_spec(raw: str | None, now: datetime | None = None) -> MonthSpec:
@@ -101,6 +112,35 @@ def _shorten(value: str, limit: int = 42) -> str:
 
 def _track_key(artist: str, track: str) -> tuple[str, str]:
     return (artist.strip(), track.strip())
+
+
+def _best_image_url(images: Any) -> str | None:
+    if not isinstance(images, list):
+        return None
+    for preferred_size in ("extralarge", "large", "medium", "small"):
+        for image in images:
+            if isinstance(image, dict) and image.get("size") == preferred_size:
+                url = _text(image)
+                if url:
+                    return url
+    for image in reversed(images):
+        url = _text(image)
+        if url:
+            return url
+    return None
+
+
+def _fit_cover(image: Image.Image, size: int) -> Image.Image:
+    image = image.convert("RGB")
+    width, height = image.size
+    if width <= 0 or height <= 0:
+        return Image.new("RGB", (size, size), (24, 24, 24))
+    scale = max(size / width, size / height)
+    new_size = (max(size, int(width * scale)), max(size, int(height * scale)))
+    image = image.resize(new_size, Image.LANCZOS)
+    left = (image.width - size) // 2
+    top = (image.height - size) // 2
+    return image.crop((left, top, left + size, top + size))
 
 
 class LastfmCapsuleService:
@@ -181,6 +221,26 @@ class LastfmCapsuleService:
             return None
         return max(1, int(duration_ms / 1000))
 
+    async def _track_image_url(self, client: httpx.AsyncClient, artist: str, track: str) -> str | None:
+        data = await self._api_get(
+            client,
+            {
+                "method": "track.getInfo",
+                "artist": artist,
+                "track": track,
+                "autocorrect": "1",
+            },
+        )
+        if not data:
+            return None
+        track_data = data.get("track")
+        if not isinstance(track_data, dict):
+            return None
+        album = track_data.get("album")
+        if isinstance(album, dict):
+            return _best_image_url(album.get("image"))
+        return None
+
     async def _estimate_minutes(self, track_counts: Counter[tuple[str, str]]) -> tuple[int | None, int, int]:
         if not track_counts:
             return None, 0, 0
@@ -198,21 +258,52 @@ class LastfmCapsuleService:
             return None, looked_up, covered_plays
         return round(total_seconds / 60), looked_up, covered_plays
 
-    async def build_capsule_text(self, user_id: int, display_name: str, raw_month: str | None = None) -> str:
+    async def _build_collage(self, top_tracks: list[tuple[tuple[str, str], int]]) -> bytes | None:
+        if len(top_tracks) < MIN_COLLAGE_COVERS:
+            return None
+        covers: list[Image.Image] = []
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS, follow_redirects=True) as client:
+            for (artist, track), _ in top_tracks[:MIN_COLLAGE_COVERS]:
+                url = await self._track_image_url(client, artist, track)
+                if not url:
+                    return None
+                try:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    with Image.open(io.BytesIO(response.content)) as raw:
+                        covers.append(_fit_cover(raw, COVER_SIZE))
+                except Exception:
+                    logger.exception("Failed to download monthfm cover | artist=%s | track=%s", artist, track)
+                    return None
+        if len(covers) != MIN_COLLAGE_COVERS:
+            return None
+
+        collage = Image.new("RGB", (COLLAGE_SIZE, COLLAGE_SIZE), (10, 10, 10))
+        positions = [(0, 0), (COVER_SIZE, 0), (0, COVER_SIZE), (COVER_SIZE, COVER_SIZE)]
+        for cover, position in zip(covers, positions, strict=True):
+            collage.paste(cover, position)
+        draw = ImageDraw.Draw(collage)
+        draw.line((COVER_SIZE, 0, COVER_SIZE, COLLAGE_SIZE), fill=(12, 12, 12), width=6)
+        draw.line((0, COVER_SIZE, COLLAGE_SIZE, COVER_SIZE), fill=(12, 12, 12), width=6)
+        output = io.BytesIO()
+        collage.save(output, format="JPEG", quality=92, optimize=True)
+        return output.getvalue()
+
+    async def build_capsule(self, user_id: int, display_name: str, raw_month: str | None = None) -> CapsuleResult:
         username = await lastfm_service.get_username(user_id)
         if not username:
-            return "Use /lastfm <username> antes de gerar a cápsula mensal."
+            return CapsuleResult("Use /lastfm <username> antes de gerar a cápsula mensal.")
         if not LASTFM_API_KEY:
-            return "LASTFM_API_KEY ausente no Railway. Não consigo consultar o Last.fm."
+            return CapsuleResult("LASTFM_API_KEY ausente no Railway. Não consigo consultar o Last.fm.")
 
         try:
             spec = parse_month_spec(raw_month)
         except Exception:
-            return "Mês inválido. Use /monthfm, /monthfm 05 ou /monthfm 2026-05."
+            return CapsuleResult("Mês inválido. Use /monthfm, /monthfm 05 ou /monthfm 2026-05.")
 
         recent_items, total_reported, capped = await self._recent_tracks(username, spec)
         if not recent_items:
-            return f"♫ <b>{html.escape(spec.label)} Capsule</b>\n\nNenhum scrobble encontrado para @{html.escape(username)} nesse mês."
+            return CapsuleResult(f"♫ <b>{html.escape(spec.label)} Capsule</b>\n\nNenhum scrobble encontrado para @{html.escape(username)} nesse mês.")
 
         track_counts: Counter[tuple[str, str]] = Counter()
         artist_counts: Counter[str] = Counter()
@@ -229,6 +320,7 @@ class LastfmCapsuleService:
                 album_counts[(artist, album)] += 1
 
         minutes, _, covered_plays = await self._estimate_minutes(track_counts)
+        photo_bytes = await self._build_collage(track_counts.most_common(MIN_COLLAGE_COVERS))
 
         safe_name = html.escape(display_name or username)
         lines: list[str] = [
@@ -271,7 +363,11 @@ class LastfmCapsuleService:
         if capped:
             lines.extend(["", "<i>Resultado parcial: o mês tem mais scrobbles do que o limite seguro de leitura do bot.</i>"])
 
-        return "\n".join(lines)
+        return CapsuleResult("\n".join(lines), photo_bytes=photo_bytes)
+
+    async def build_capsule_text(self, user_id: int, display_name: str, raw_month: str | None = None) -> str:
+        result = await self.build_capsule(user_id, display_name, raw_month)
+        return result.text
 
 
 lastfm_capsule_service = LastfmCapsuleService()
