@@ -9,7 +9,7 @@ from sqlalchemy import text
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 
-from app.bot.monthfm import router as monthfm_router
+from app.bot.monthfm import monthfm as monthfm_command, router as monthfm_router
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
 from app.db.database import engine, init_db, run_migrations
@@ -67,6 +67,10 @@ def _is_tigrao_command(text_value: str | None) -> bool:
 
 def _is_tigraopm_command(text_value: str | None) -> bool:
     return _command_name(text_value) == "/tigraopm"
+
+
+def _is_monthfm_command(text_value: str | None) -> bool:
+    return _command_name(text_value) == "/monthfm"
 
 
 def _log_message_update(update: Update) -> None:
@@ -154,6 +158,23 @@ async def _handle_tigraopm_direct(update: Update) -> bool:
         return True
     await tigrao_pm_command(message)
     logger.warning("TIGRAOPM_DIRECT_ANSWER_SENT | update_id=%s", update.update_id)
+    return True
+
+
+async def _handle_monthfm_direct(update: Update) -> bool:
+    message = update.message
+    if not message or not _is_monthfm_command(message.text):
+        return False
+    logger.warning(
+        "MONTHFM_DIRECT_RECEIVED | update_id=%s | chat_type=%s | chat_id=%s | from_id=%s | token=%s",
+        update.update_id,
+        getattr(message.chat, "type", None),
+        getattr(message.chat, "id", None),
+        getattr(message.from_user, "id", None),
+        _first_token(message.text),
+    )
+    await monthfm_command(message)
+    logger.warning("MONTHFM_DIRECT_ANSWER_SENT | update_id=%s", update.update_id)
     return True
 
 
@@ -311,6 +332,13 @@ async def telegram_webhook(request: Request):
             logger.exception("TIGRAOPM_DIRECT_FAILED | update_id=%s", update.update_id)
             tigraopm_handled = False
         if tigraopm_handled:
+            return {"ok": True}
+        try:
+            monthfm_handled = await _handle_monthfm_direct(update)
+        except Exception:
+            logger.exception("MONTHFM_DIRECT_FAILED | update_id=%s", update.update_id)
+            monthfm_handled = False
+        if monthfm_handled:
             return {"ok": True}
         try:
             await tigrao_pm_preprocess_update(update)
