@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import calendar
 import html
 import logging
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -265,14 +264,10 @@ class LastfmCapsuleService:
                 coverage_note = f" · cobertura {coverage}%"
             lines.append(f"aprox. <code>{_format_number(minutes)}</code> minutos ouvidos{coverage_note}")
         else:
-            lines.append("minutos ouvidos indisponíveis: o Last.fm não retornou duração suficiente das faixas")
+            lines.append("minutos ouvidos indisponíveis")
 
         if capped:
-            lines.extend(["", "⚠️ Resultado parcial: o mês tem mais scrobbles do que o limite seguro de leitura do bot."])
-        elif minutes is not None and duration_lookups >= MAX_DURATION_LOOKUPS:
-            lines.extend(["", "ℹ️ Minutos estimados por duração das faixas consultadas no Last.fm."])
-        else:
-            lines.extend(["", "ℹ️ Scrobbles calculados pelo histórico mensal do Last.fm; minutos são estimados por duração de faixas."])
+            lines.extend(["", "Resultado parcial: o mês tem mais scrobbles do que o limite seguro de leitura do bot."])
 
         return "\n".join(lines)
 
