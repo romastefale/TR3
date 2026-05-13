@@ -130,6 +130,10 @@ def _best_image_url(images: Any) -> str | None:
     return None
 
 
+def _plain(value: str) -> str:
+    return html.escape(value, quote=False)
+
+
 def _fit_cover(image: Image.Image, size: int) -> Image.Image:
     image = image.convert("RGB")
     width, height = image.size
@@ -304,7 +308,7 @@ class LastfmCapsuleService:
 
         recent_items, total_reported, capped = await self._recent_tracks(username, spec)
         if not recent_items:
-            return CapsuleResult(f"♫ <b>{html.escape(spec.label)} Capsule</b>\n\nNenhum scrobble encontrado para @{html.escape(username)} nesse mês.")
+            return CapsuleResult(f"♫ {html.escape(spec.label)} Capsule\n\nNenhum scrobble encontrado para @{html.escape(username)} nesse mês.")
 
         track_counts: Counter[tuple[str, str]] = Counter()
         artist_counts: Counter[str] = Counter()
@@ -328,41 +332,39 @@ class LastfmCapsuleService:
         minutes, _, _ = await self._estimate_minutes(track_counts)
         photo_bytes = await self._build_collage(track_counts.most_common(MIN_COLLAGE_COVERS), image_urls)
 
-        safe_name = html.escape(display_name or username)
+        safe_name = _plain(display_name or username)
         lines: list[str] = [
-            f"<b>{safe_name}</b> · ♫ <b>{html.escape(spec.label)}</b>",
+            f"{safe_name} · ♫ {_plain(spec.label)}",
             "",
-            "✦ <b>Top artistas</b>",
+            "✦ Top artistas",
         ]
 
         for idx, (artist, count) in enumerate(artist_counts.most_common(5), 1):
-            lines.append(f"<b>{idx}.</b> {html.escape(_shorten(artist))} <i>— {_format_number(count)} scrobbles</i>")
+            lines.append(f"{idx}. {_plain(_shorten(artist))} — {_format_number(count)} scrobbles")
 
-        lines.extend(["", "♫ <b>Top músicas</b>"])
+        lines.extend(["", "♫ Top músicas"])
         for idx, ((artist, track), count) in enumerate(track_counts.most_common(5), 1):
             lines.append(
-                f"<b>{idx}.</b> <b>{html.escape(_shorten(track, 36))}</b> "
-                f"— <i>{html.escape(_shorten(artist, 24))}</i> "
-                f"<code>{_format_number(count)} plays</code>"
+                f"{idx}. {_plain(_shorten(track, 42))} — {_plain(_shorten(artist, 24))} {_format_number(count)} plays"
             )
 
-        lines.extend(["", "◌ <b>Disco mais ouvido</b>"])
+        lines.extend(["", "◌ Disco mais ouvido"])
         if album_counts:
             (album_artist, album_name), album_count = album_counts.most_common(1)[0]
-            lines.append(f"<b>{html.escape(_shorten(album_name, 44))}</b>")
-            lines.append(f"<i>{html.escape(_shorten(album_artist, 30))}</i> · <code>{_format_number(album_count)}</code> scrobbles")
+            lines.append(_plain(_shorten(album_name, 44)))
+            lines.append(f"{_plain(_shorten(album_artist, 30))} · {_format_number(album_count)} scrobbles")
         else:
-            lines.append("<i>Sem álbum identificado nos scrobbles do mês.</i>")
+            lines.append("Sem álbum identificado nos scrobbles do mês.")
 
-        lines.extend(["", "⌁ <b>Total do mês</b>"])
-        lines.append(f"<b>{_format_number(total_reported)}</b> scrobbles")
+        lines.extend(["", "⌁ Total do mês"])
+        lines.append(f"{_format_number(total_reported)} scrobbles")
         if minutes is not None:
-            lines.append(f"<i>aprox.</i> <b>{_format_number(minutes)}</b> minutos ouvidos")
+            lines.append(f"aprox. {_format_number(minutes)} minutos ouvidos")
         else:
-            lines.append("<i>minutos ouvidos indisponíveis</i>")
+            lines.append("minutos ouvidos indisponíveis")
 
         if capped:
-            lines.extend(["", "<i>Resultado parcial: o mês tem mais scrobbles do que o limite seguro de leitura do bot.</i>"])
+            lines.extend(["", "Resultado parcial: o mês tem mais scrobbles do que o limite seguro de leitura do bot."])
 
         return CapsuleResult("\n".join(lines), photo_bytes=photo_bytes)
 
