@@ -14,6 +14,9 @@ from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
 from app.db.database import engine, init_db, run_migrations
 from app.moderation_tigrao import ddx_router as tigrao_ddx_router, router as tigrao_router
 from app.moderation_tigrao.ddx_runtime import tigrao_ddx_preprocess_update
+from app.moderation_tigrao.keyboards import home_keyboard
+from app.moderation_tigrao.permissions import is_owner_private_message
+from app.moderation_tigrao.texts import home_text
 from app.services.music_proxy import install_music_proxy
 from app.services.spotify import spotify_service
 
@@ -23,6 +26,34 @@ logger = logging.getLogger(__name__)
 bot: Bot | None = None
 dispatcher: Dispatcher = bot_dispatcher
 _telegram_dispatcher_configured = False
+
+
+def _is_tigrao_command(text_value: str | None) -> bool:
+    if not text_value:
+        return False
+    token = text_value.strip().split(maxsplit=1)[0].lower()
+    command = token.split("@", 1)[0]
+    return command == "/tigrao"
+
+
+async def _handle_tigrao_direct(update: Update) -> bool:
+    message = update.message
+    if not message or not _is_tigrao_command(message.text):
+        return False
+    if not is_owner_private_message(message):
+        logger.warning(
+            "TIGRAO_DIRECT_DENIED | chat_type=%s | from_id=%s",
+            getattr(message.chat, "type", None),
+            getattr(message.from_user, "id", None),
+        )
+        return True
+    logger.warning(
+        "TIGRAO_DIRECT_ALLOWED | chat_type=%s | from_id=%s",
+        message.chat.type,
+        message.from_user.id if message.from_user else None,
+    )
+    await message.answer(home_text(), reply_markup=home_keyboard())
+    return True
 
 
 @app.on_event("startup")
@@ -104,6 +135,13 @@ async def telegram_webhook(request: Request):
             logger.error("Bot não inicializado")
             return {"ok": True}
         logger.warning("WEBHOOK_RECEIVED | update_id=%s", update.update_id)
+        try:
+            tigrao_handled = await _handle_tigrao_direct(update)
+        except Exception:
+            logger.exception("TIGRAO_DIRECT_FAILED | update_id=%s", update.update_id)
+            tigrao_handled = False
+        if tigrao_handled:
+            return {"ok": True}
         try:
             ddx_deleted = await tigrao_ddx_preprocess_update(bot, update)
         except Exception:
