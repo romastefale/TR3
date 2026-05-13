@@ -71,6 +71,19 @@ def _confirm_text() -> str:
     )
 
 
+def _execution_text(action: str, chat_id: int | str, target_user_id: int | str, payload: dict) -> str:
+    action_label = ACTION_LABELS.get(action, action)
+    duration_line = f"\nDuração: {payload.get('duration_label')}" if payload.get("duration_label") else ""
+    return (
+        "Tigrão — executando ação\n\n"
+        f"Grupo: {chat_id}\n"
+        f"Ação: {action_label}\n"
+        f"Usuário: {target_user_id}"
+        f"{duration_line}\n\n"
+        "Aguarde o retorno de conclusão ou erro."
+    )
+
+
 def _logs_text() -> str:
     rows = list_logs(10)
     if not rows:
@@ -391,10 +404,17 @@ async def tigrao_confirm(callback: CallbackQuery) -> None:
         await callback.answer()
         return
 
+    await callback.answer("Executando ação...")
+    if callback.message:
+        await callback.message.edit_text(
+            _execution_text(action, chat_id, target_user_id, session.payload),
+            reply_markup=None,
+        )
+
     try:
         extra = await _execute_simple_action(callback.bot, action, int(chat_id), int(target_user_id), session.payload)
         log_action(chat_id=int(chat_id), action=action, target_user_id=int(target_user_id), status="success")
-        details = f"Grupo: {chat_id}\nAção: {ACTION_LABELS[action]}\nUsuário: {target_user_id}"
+        details = f"Grupo: {chat_id}\nAção: {ACTION_LABELS[action]}\nUsuário: {target_user_id}\nStatus: concluído com sucesso"
         if session.payload.get("duration_label"):
             details += f"\nDuração: {session.payload['duration_label']}"
         if extra:
@@ -406,7 +426,11 @@ async def tigrao_confirm(callback: CallbackQuery) -> None:
         log_action(chat_id=int(chat_id), action=action, target_user_id=int(target_user_id), status="error", error_type=type(exc).__name__, error_message=str(exc))
         if callback.message:
             await callback.message.edit_text(
-                error_text("Permissão insuficiente", "O Telegram recusou a ação por falta de permissão do bot.", "Confira se o bot é administrador do grupo e tem a permissão necessária."),
+                error_text(
+                    "Permissão insuficiente",
+                    f"O Telegram recusou a ação. Erro: {type(exc).__name__}: {exc}",
+                    "Confira se o bot é administrador do grupo e tem a permissão necessária.",
+                ),
                 reply_markup=user_actions_keyboard(),
             )
     except Exception as exc:
@@ -416,7 +440,6 @@ async def tigrao_confirm(callback: CallbackQuery) -> None:
                 error_text("Falha ao executar", f"{type(exc).__name__}: {exc}", "Confira grupo, user_id e permissões do bot."),
                 reply_markup=user_actions_keyboard(),
             )
-    await callback.answer()
 
 
 @router.callback_query(F.data == "tigrao:cancel")
