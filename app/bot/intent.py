@@ -4,7 +4,7 @@ def detect_intent(text: str) -> str | None:
 
     value = text.strip().lower()
     aliases = {
-        "tocando", "pifm", "cyo", "py", "braya", "dead", "ag", "rosan",
+        "tocando", "pifm", "cyo", "py", "braya", "mon", "ag", "rosan",
         "roro", "ro", "rafarl", "pipi", "bressing", "kur", "xxt", "ts",
         "cebrutius", "tigraofm", "djpi", "royalfm", "geeksfm", "radinho", "qap",
     }
