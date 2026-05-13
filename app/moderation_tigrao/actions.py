@@ -29,7 +29,7 @@ def _full_permissions() -> ChatPermissions:
 
 
 async def ban_user(bot: Bot, chat_id: int, user_id: int) -> None:
-    await bot.ban_chat_member(chat_id=chat_id, user_id=user_id)
+    await bot.ban_chat_member(chat_id=chat_id, user_id=user_id, revoke_messages=True)
 
 
 async def unban_user(bot: Bot, chat_id: int, user_id: int) -> None:
