@@ -12,13 +12,14 @@ from aiogram.types import Update
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
 from app.db.database import engine, init_db, run_migrations
-from app.moderation_tigrao import customize_router as tigrao_customize_router, ddx_router as tigrao_ddx_router, member_tag_router as tigrao_member_tag_router, router as tigrao_router
+from app.moderation_tigrao import customize_router as tigrao_customize_router, ddx_router as tigrao_ddx_router, member_tag_router as tigrao_member_tag_router, pm_router as tigrao_pm_router, router as tigrao_router
 from app.moderation_tigrao.customize_router import tigrao_receive_group_photo
 from app.moderation_tigrao.ddx_router import tigrao_ddx_receive_add_words, tigrao_ddx_receive_remove_words
 from app.moderation_tigrao.ddx_runtime import tigrao_ddx_preprocess_update
 from app.moderation_tigrao.keyboards import home_keyboard
 from app.moderation_tigrao.member_tag_router import tigrao_member_tag_receive_text
 from app.moderation_tigrao.permissions import is_owner_private_message
+from app.moderation_tigrao.pm_storage import init_tigrao_pm_tables
 from app.moderation_tigrao.router import tigrao_private_text
 from app.moderation_tigrao.state import get_session
 from app.moderation_tigrao.storage import remember_group
@@ -179,6 +180,7 @@ async def on_startup() -> None:
     install_music_proxy()
     init_db()
     run_migrations(engine)
+    init_tigrao_pm_tables()
     with engine.begin() as conn:
         conn.execute(
             text(
@@ -197,6 +199,7 @@ async def on_startup() -> None:
             dispatcher.include_router(tigrao_ddx_router)
             dispatcher.include_router(tigrao_customize_router)
             dispatcher.include_router(tigrao_member_tag_router)
+            dispatcher.include_router(tigrao_pm_router)
             dispatcher.include_router(tigrao_router)
             _register_handlers(dispatcher)
             _telegram_dispatcher_configured = True
