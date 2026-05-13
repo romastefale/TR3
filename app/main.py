@@ -16,6 +16,8 @@ from app.moderation_tigrao import ddx_router as tigrao_ddx_router, router as tig
 from app.moderation_tigrao.ddx_runtime import tigrao_ddx_preprocess_update
 from app.moderation_tigrao.keyboards import home_keyboard
 from app.moderation_tigrao.permissions import is_owner_private_message
+from app.moderation_tigrao.router import tigrao_private_text
+from app.moderation_tigrao.state import get_session
 from app.moderation_tigrao.storage import remember_group
 from app.moderation_tigrao.texts import home_text
 from app.services.music_proxy import install_music_proxy
@@ -27,6 +29,7 @@ logger = logging.getLogger(__name__)
 bot: Bot | None = None
 dispatcher: Dispatcher = bot_dispatcher
 _telegram_dispatcher_configured = False
+TIGRAO_TEXT_WAITING_STATES = {"chat_id", "outbound_text", "message_link", "user_id", "duration"}
 
 
 def _first_token(text_value: str | None) -> str:
@@ -101,6 +104,28 @@ async def _handle_tigrao_direct(update: Update) -> bool:
     )
     await message.answer(home_text(), reply_markup=home_keyboard())
     logger.warning("TIGRAO_DIRECT_ANSWER_SENT | update_id=%s", update.update_id)
+    return True
+
+
+async def _handle_tigrao_waiting_text_direct(update: Update) -> bool:
+    message = update.message
+    if not message or not message.text:
+        return False
+    if not is_owner_private_message(message):
+        return False
+    session = get_session()
+    if session.waiting_for not in TIGRAO_TEXT_WAITING_STATES:
+        return False
+    logger.warning(
+        "TIGRAO_WAITING_TEXT_DIRECT | update_id=%s | waiting_for=%s | selected_action=%s | selected_chat_id=%s | from_id=%s | token=%s",
+        update.update_id,
+        session.waiting_for,
+        session.selected_action,
+        session.selected_chat_id,
+        message.from_user.id if message.from_user else None,
+        _first_token(message.text),
+    )
+    await tigrao_private_text(message)
     return True
 
 
@@ -194,6 +219,13 @@ async def telegram_webhook(request: Request):
             logger.exception("TIGRAO_DIRECT_FAILED | update_id=%s", update.update_id)
             tigrao_handled = False
         if tigrao_handled:
+            return {"ok": True}
+        try:
+            tigrao_waiting_text_handled = await _handle_tigrao_waiting_text_direct(update)
+        except Exception:
+            logger.exception("TIGRAO_WAITING_TEXT_DIRECT_FAILED | update_id=%s", update.update_id)
+            tigrao_waiting_text_handled = False
+        if tigrao_waiting_text_handled:
             return {"ok": True}
         try:
             ddx_deleted = await tigrao_ddx_preprocess_update(bot, update)
