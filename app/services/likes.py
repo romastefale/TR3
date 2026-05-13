@@ -37,6 +37,24 @@ class LikesService:
             )
             db.commit()
 
+    async def get_track_metadata(self, track_id: str, owner_user_id: int | None = None) -> tuple[str | None, str | None]:
+        with self._new_session() as db:
+            query = db.query(TrackPlay.track_name, TrackPlay.artist_name).filter(TrackPlay.track_id == track_id)
+            if owner_user_id is not None:
+                query = query.filter(TrackPlay.user_id == owner_user_id)
+            row = query.order_by(TrackPlay.id.desc()).first()
+            if row:
+                return self._normalize_optional_text(row[0]), self._normalize_optional_text(row[1])
+
+            like_query = db.query(TrackLike.track_name, TrackLike.artist_name).filter(TrackLike.track_id == track_id)
+            if owner_user_id is not None:
+                like_query = like_query.filter(TrackLike.owner_user_id == owner_user_id)
+            like_row = like_query.order_by(TrackLike.id.desc()).first()
+            if like_row:
+                return self._normalize_optional_text(like_row[0]), self._normalize_optional_text(like_row[1])
+
+        return None, None
+
     async def get_track_play_count(self, track_id: str) -> int:
         with self._new_session() as db:
             return int(db.execute(select(func.count(TrackPlay.id)).where(TrackPlay.track_id == track_id)).scalar_one())
