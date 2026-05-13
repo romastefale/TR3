@@ -44,6 +44,7 @@ ACTION_LABELS = {
     "reset": "Resetar entrada",
 }
 SIMPLE_EXECUTABLE_ACTIONS = {"ban", "unban", "unmute", "approve", "reset"}
+TEXT_WAITING_STATES = {"chat_id", "outbound_text", "message_link", "user_id", "duration"}
 
 
 def _section_text(title: str, detail: str) -> str:
@@ -106,6 +107,14 @@ def _need_group_text() -> str:
     )
 
 
+def _is_owner_waiting_text(message: Message) -> bool:
+    return is_owner_private_message(message) and get_session().waiting_for in TEXT_WAITING_STATES
+
+
+def _is_owner_waiting_media(message: Message) -> bool:
+    return is_owner_private_message(message) and get_session().waiting_for == "outbound_media"
+
+
 async def _execute_simple_action(bot, action: str, chat_id: int, user_id: int, payload: dict) -> str | None:
     if action == "ban":
         await ban_user(bot, chat_id, user_id)
@@ -134,10 +143,8 @@ async def tigrao_home(message: Message) -> None:
     await message.answer(home_text(), reply_markup=home_keyboard())
 
 
-@router.message(F.text)
+@router.message(F.text, _is_owner_waiting_text)
 async def tigrao_private_text(message: Message) -> None:
-    if not is_owner_private_message(message):
-        return
     session = get_session()
 
     if session.waiting_for == "chat_id":
@@ -237,13 +244,9 @@ async def tigrao_private_text(message: Message) -> None:
         return
 
 
-@router.message(F.photo | F.video | F.document | F.animation | F.sticker | F.audio | F.voice | F.video_note)
+@router.message(F.photo | F.video | F.document | F.animation | F.sticker | F.audio | F.voice | F.video_note, _is_owner_waiting_media)
 async def tigrao_private_media(message: Message) -> None:
-    if not is_owner_private_message(message):
-        return
     session = get_session()
-    if session.waiting_for != "outbound_media":
-        return
     if not session.selected_chat_id:
         await message.answer(_need_group_text(), reply_markup=home_keyboard())
         return
