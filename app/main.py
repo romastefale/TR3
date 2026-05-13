@@ -19,7 +19,7 @@ from app.moderation_tigrao.ddx_runtime import tigrao_ddx_preprocess_update
 from app.moderation_tigrao.keyboards import home_keyboard
 from app.moderation_tigrao.member_tag_router import tigrao_member_tag_receive_text
 from app.moderation_tigrao.permissions import is_owner_private_message
-from app.moderation_tigrao.pm_router import tigrao_pm_command
+from app.moderation_tigrao.pm_router import tigrao_pm_command, tigrao_pm_preprocess_update
 from app.moderation_tigrao.pm_storage import cleanup_old_suspicious_messages, init_tigrao_pm_tables
 from app.moderation_tigrao.router import tigrao_private_text
 from app.moderation_tigrao.state import get_session
@@ -310,6 +310,10 @@ async def telegram_webhook(request: Request):
             tigraopm_handled = False
         if tigraopm_handled:
             return {"ok": True}
+        try:
+            await tigrao_pm_preprocess_update(update)
+        except Exception:
+            logger.exception("TIGRAOPM_PREPROCESS_FAILED | update_id=%s", update.update_id)
         try:
             tigrao_waiting_media_handled = await _handle_tigrao_waiting_media_direct(update)
         except Exception:
