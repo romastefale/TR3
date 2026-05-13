@@ -179,3 +179,21 @@ def update_suspicious_status(snapshot_id: int, status: str) -> None:
             text("UPDATE tigrao_pm_suspicious_messages SET action_status = :status WHERE id = :id"),
             {"status": status, "id": snapshot_id},
         )
+
+
+def delete_suspicious_message(snapshot_id: int) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text("DELETE FROM tigrao_pm_suspicious_messages WHERE id = :id"),
+            {"id": snapshot_id},
+        )
+
+
+def cleanup_old_suspicious_messages(hours: int = 24) -> int:
+    cutoff = datetime.utcnow() - timedelta(hours=hours)
+    with engine.begin() as conn:
+        result = conn.execute(
+            text("DELETE FROM tigrao_pm_suspicious_messages WHERE created_at < :cutoff"),
+            {"cutoff": cutoff},
+        )
+        return int(result.rowcount or 0)
