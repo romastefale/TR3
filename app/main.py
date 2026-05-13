@@ -19,7 +19,7 @@ from app.moderation_tigrao.ddx_runtime import tigrao_ddx_preprocess_update
 from app.moderation_tigrao.keyboards import home_keyboard
 from app.moderation_tigrao.member_tag_router import tigrao_member_tag_receive_text
 from app.moderation_tigrao.permissions import is_owner_private_message
-from app.moderation_tigrao.pm_storage import init_tigrao_pm_tables
+from app.moderation_tigrao.pm_storage import cleanup_old_suspicious_messages, init_tigrao_pm_tables
 from app.moderation_tigrao.router import tigrao_private_text
 from app.moderation_tigrao.state import get_session
 from app.moderation_tigrao.storage import remember_group
@@ -181,6 +181,7 @@ async def on_startup() -> None:
     init_db()
     run_migrations(engine)
     init_tigrao_pm_tables()
+    cleanup_old_suspicious_messages(hours=24)
     with engine.begin() as conn:
         conn.execute(
             text(
