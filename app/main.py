@@ -30,7 +30,17 @@ logger = logging.getLogger(__name__)
 bot: Bot | None = None
 dispatcher: Dispatcher = bot_dispatcher
 _telegram_dispatcher_configured = False
-TIGRAO_TEXT_WAITING_STATES = {"chat_id", "outbound_text", "message_link", "user_id", "duration", "ddx_add_words", "ddx_remove_words"}
+TIGRAO_TEXT_WAITING_STATES = {
+    "chat_id",
+    "outbound_text",
+    "message_link",
+    "user_id",
+    "duration",
+    "ddx_add_words",
+    "ddx_remove_words",
+    "customize_title",
+    "customize_bio",
+}
 
 
 def _first_token(text_value: str | None) -> str:
