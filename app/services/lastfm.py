@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+import unicodedata
 from datetime import datetime
 from typing import Any
 from urllib.parse import quote
@@ -14,6 +15,9 @@ from app.db.database import SessionLocal
 from app.models.lastfm_profile import LastfmProfile
 
 logger = logging.getLogger(__name__)
+
+DEEZER_SEARCH_URL = "https://api.deezer.com/search"
+DEEZER_COVER_TIMEOUT_SECONDS = 2.5
 
 
 def _clean_username(username: str) -> str:
@@ -28,6 +32,22 @@ def _stable_track_id(artist: str, track: str) -> str:
     raw = re.sub(r"\s+", " ", raw)
     digest = hashlib.sha1(raw.encode("utf-8")).hexdigest()[:20]
     return f"lfm:{digest}"
+
+
+def _normalize_match(value: str) -> str:
+    value = unicodedata.normalize("NFD", value.lower())
+    value = "".join(char for char in value if unicodedata.category(char) != "Mn")
+    value = re.sub(r"\([^)]*\)|\[[^]]*\]", " ", value)
+    value = re.sub(r"[^a-z0-9]+", " ", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _looks_like_match(expected: str, found: str) -> bool:
+    expected_norm = _normalize_match(expected)
+    found_norm = _normalize_match(found)
+    if not expected_norm or not found_norm:
+        return False
+    return expected_norm == found_norm or expected_norm in found_norm or found_norm in expected_norm
 
 
 class LastfmService:
@@ -90,14 +110,48 @@ class LastfmService:
             return None
 
         item = recent[0]
-        return self._map_track(username, item)
+        return await self._map_track(username, item)
 
     def _text(self, value: Any) -> str:
         if isinstance(value, dict):
             return str(value.get("#text") or value.get("name") or "").strip()
         return str(value or "").strip()
 
-    def _map_track(self, username: str, item: dict[str, Any]) -> dict[str, Any] | None:
+    async def _find_deezer_cover(self, *, artist: str, track_name: str, album: str | None = None) -> str | None:
+        query_parts = [f'artist:"{artist}"', f'track:"{track_name}"']
+        if album:
+            query_parts.append(f'album:"{album}"')
+        params = {"q": " ".join(query_parts), "limit": "5"}
+
+        try:
+            async with httpx.AsyncClient(timeout=DEEZER_COVER_TIMEOUT_SECONDS) as client:
+                response = await client.get(DEEZER_SEARCH_URL, params=params)
+        except Exception:
+            logger.info("Deezer cover lookup failed silently | artist=%s | track=%s", artist, track_name)
+            return None
+
+        if response.status_code != 200:
+            logger.info("Deezer cover lookup returned %s | artist=%s | track=%s", response.status_code, artist, track_name)
+            return None
+
+        data = response.json()
+        items = data.get("data") or []
+        if not isinstance(items, list):
+            return None
+
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            found_title = str(item.get("title") or "")
+            found_artist = str((item.get("artist") or {}).get("name") or "")
+            if not _looks_like_match(track_name, found_title) or not _looks_like_match(artist, found_artist):
+                continue
+            cover = (item.get("album") or {}).get("cover_big")
+            if cover:
+                return str(cover)
+        return None
+
+    async def _map_track(self, username: str, item: dict[str, Any]) -> dict[str, Any] | None:
         track_name = self._text(item.get("name"))
         artist = self._text(item.get("artist"))
         album = self._text(item.get("album"))
@@ -116,6 +170,10 @@ class LastfmService:
                 if isinstance(image, dict) and image.get("#text"):
                     cover = image.get("#text")
                     break
+
+        deezer_cover = await self._find_deezer_cover(artist=artist, track_name=track_name, album=album or None)
+        if deezer_cover:
+            cover = deezer_cover
 
         track_url = item.get("url") or f"https://www.last.fm/user/{quote(username)}/library"
         album_url = f"https://www.last.fm/music/{quote(artist)}/{quote(album)}" if album else track_url
