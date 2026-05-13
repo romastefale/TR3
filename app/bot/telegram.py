@@ -97,10 +97,11 @@ def _user_mention(message: Message) -> str:
     return f'<a href="tg://user?id={message.from_user.id}">{display_name}</a>'
 
 
-async def _resolve_play_button_count(user_id: int, track_id: str, artist: str, track_name: str) -> tuple[int, str]:
-    lastfm_count = await lastfm_service.get_user_track_playcount(user_id, artist, track_name)
-    if lastfm_count is not None:
-        return lastfm_count, "lastfm"
+async def _resolve_play_button_count(user_id: int, track_id: str, artist: str | None, track_name: str | None) -> tuple[int, str]:
+    if artist and track_name:
+        lastfm_count = await lastfm_service.get_user_track_playcount(user_id, artist, track_name)
+        if lastfm_count is not None:
+            return lastfm_count, "lastfm"
     return await likes_service.get_track_play_count(track_id), "local"
 
 
@@ -343,10 +344,11 @@ def _register_handlers(dp: Dispatcher) -> None:
             return
         track_id = parts[2]
         liked = await likes_service.toggle_track_like(query.from_user.id, owner_user_id, track_id)
-        local_plays = await likes_service.get_track_play_count(track_id)
         total_likes = await likes_service.get_total_likes(track_id, owner_user_id=owner_user_id)
+        track_name, artist = await likes_service.get_track_metadata(track_id, owner_user_id=owner_user_id)
+        total_plays, plays_source = await _resolve_play_button_count(owner_user_id, track_id, artist, track_name)
         try:
-            await query.message.edit_reply_markup(reply_markup=_playing_keyboard(track_id, owner_user_id, local_plays, total_likes, liked, "local"))  # type: ignore[union-attr]
+            await query.message.edit_reply_markup(reply_markup=_playing_keyboard(track_id, owner_user_id, total_plays, total_likes, liked, plays_source))  # type: ignore[union-attr]
         except Exception:
             logger.exception("Failed to edit like markup")
         await query.answer()
