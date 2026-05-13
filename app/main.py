@@ -13,6 +13,7 @@ from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_disp
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
 from app.db.database import engine, init_db, run_migrations
 from app.moderation_tigrao import ddx_router as tigrao_ddx_router, router as tigrao_router
+from app.moderation_tigrao.ddx_router import tigrao_ddx_receive_add_words, tigrao_ddx_receive_remove_words
 from app.moderation_tigrao.ddx_runtime import tigrao_ddx_preprocess_update
 from app.moderation_tigrao.keyboards import home_keyboard
 from app.moderation_tigrao.permissions import is_owner_private_message
@@ -29,7 +30,7 @@ logger = logging.getLogger(__name__)
 bot: Bot | None = None
 dispatcher: Dispatcher = bot_dispatcher
 _telegram_dispatcher_configured = False
-TIGRAO_TEXT_WAITING_STATES = {"chat_id", "outbound_text", "message_link", "user_id", "duration"}
+TIGRAO_TEXT_WAITING_STATES = {"chat_id", "outbound_text", "message_link", "user_id", "duration", "ddx_add_words", "ddx_remove_words"}
 
 
 def _first_token(text_value: str | None) -> str:
@@ -125,7 +126,12 @@ async def _handle_tigrao_waiting_text_direct(update: Update) -> bool:
         message.from_user.id if message.from_user else None,
         _first_token(message.text),
     )
-    await tigrao_private_text(message)
+    if session.waiting_for == "ddx_add_words":
+        await tigrao_ddx_receive_add_words(message)
+    elif session.waiting_for == "ddx_remove_words":
+        await tigrao_ddx_receive_remove_words(message)
+    else:
+        await tigrao_private_text(message)
     return True
 
 
