@@ -9,7 +9,6 @@ from sqlalchemy import text
 from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 
-from app.bot.private_tools import ddx_preprocess_update
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
 from app.db.database import engine, init_db, run_migrations
@@ -106,16 +105,10 @@ async def telegram_webhook(request: Request):
             return {"ok": True}
         logger.warning("WEBHOOK_RECEIVED | update_id=%s", update.update_id)
         try:
-            ddx_deleted = await ddx_preprocess_update(bot, update)
+            ddx_deleted = await tigrao_ddx_preprocess_update(bot, update)
         except Exception:
-            logger.exception("DDX_PREPROCESS_FAILED | update_id=%s", update.update_id)
+            logger.exception("TIGRAO_DDX_PREPROCESS_FAILED | update_id=%s", update.update_id)
             ddx_deleted = False
-        if not ddx_deleted:
-            try:
-                ddx_deleted = await tigrao_ddx_preprocess_update(bot, update)
-            except Exception:
-                logger.exception("TIGRAO_DDX_PREPROCESS_FAILED | update_id=%s", update.update_id)
-                ddx_deleted = False
         if not ddx_deleted:
             try:
                 await dispatcher.feed_update(bot, update)
