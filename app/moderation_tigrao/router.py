@@ -195,9 +195,11 @@ async def tigrao_private_text(message: Message) -> None:
             )
         except TelegramForbiddenError as exc:
             log_action(chat_id=int(session.selected_chat_id), action=action, status="error", error_type=type(exc).__name__, error_message=str(exc))
+            clear_action()
             await message.answer(error_text("Permissão insuficiente", "O Telegram recusou o envio ou fixação da mensagem.", "Confira se o bot pode enviar e fixar mensagens no grupo."), reply_markup=messages_keyboard())
         except Exception as exc:
             log_action(chat_id=int(session.selected_chat_id), action=action, status="error", error_type=type(exc).__name__, error_message=str(exc))
+            clear_action()
             await message.answer(error_text("Falha ao enviar", f"{type(exc).__name__}: {exc}", "Confira grupo, texto e permissões do bot."), reply_markup=messages_keyboard())
         return
 
@@ -214,9 +216,11 @@ async def tigrao_private_text(message: Message) -> None:
             await message.answer(success_text("Mensagem apagada", f"Origem: {link_chat_id}\nMensagem: {message_id}"), reply_markup=messages_keyboard())
         except TelegramForbiddenError as exc:
             log_action(chat_id=int(link_chat_id) if isinstance(link_chat_id, int) else None, action="delete_by_link", status="error", error_type=type(exc).__name__, error_message=str(exc))
+            clear_action()
             await message.answer(error_text("Permissão insuficiente", "O Telegram recusou a remoção da mensagem.", "Confira se o bot é administrador e pode apagar mensagens."), reply_markup=messages_keyboard())
         except Exception as exc:
             log_action(chat_id=int(link_chat_id) if isinstance(link_chat_id, int) else None, action="delete_by_link", status="error", error_type=type(exc).__name__, error_message=str(exc))
+            clear_action()
             await message.answer(error_text("Falha ao apagar", f"{type(exc).__name__}: {exc}", "Confira o link e as permissões do bot."), reply_markup=messages_keyboard())
         return
 
@@ -275,9 +279,11 @@ async def tigrao_private_media(message: Message) -> None:
         await message.answer(success_text("Mídia enviada", f"Grupo: {session.selected_chat_id}\nMensagem: {copied_id}"), reply_markup=messages_keyboard())
     except TelegramForbiddenError as exc:
         log_action(chat_id=int(session.selected_chat_id), action="send_media", status="error", error_type=type(exc).__name__, error_message=str(exc))
+        clear_action()
         await message.answer(error_text("Permissão insuficiente", "O Telegram recusou o envio da mídia.", "Confira se o bot pode enviar mídia no grupo."), reply_markup=messages_keyboard())
     except Exception as exc:
         log_action(chat_id=int(session.selected_chat_id), action="send_media", status="error", error_type=type(exc).__name__, error_message=str(exc))
+        clear_action()
         await message.answer(error_text("Falha ao enviar mídia", f"{type(exc).__name__}: {exc}", "Confira grupo, mídia e permissões do bot."), reply_markup=messages_keyboard())
 
 
@@ -424,6 +430,7 @@ async def tigrao_confirm(callback: CallbackQuery) -> None:
             await callback.message.edit_text(success_text("Ação executada", details), reply_markup=user_actions_keyboard())
     except TelegramForbiddenError as exc:
         log_action(chat_id=int(chat_id), action=action, target_user_id=int(target_user_id), status="error", error_type=type(exc).__name__, error_message=str(exc))
+        clear_action()
         if callback.message:
             await callback.message.edit_text(
                 error_text(
@@ -435,6 +442,7 @@ async def tigrao_confirm(callback: CallbackQuery) -> None:
             )
     except Exception as exc:
         log_action(chat_id=int(chat_id), action=action, target_user_id=int(target_user_id), status="error", error_type=type(exc).__name__, error_message=str(exc))
+        clear_action()
         if callback.message:
             await callback.message.edit_text(
                 error_text("Falha ao executar", f"{type(exc).__name__}: {exc}", "Confira grupo, user_id e permissões do bot."),
@@ -489,6 +497,7 @@ async def tigrao_create_link(callback: CallbackQuery) -> None:
             )
     except TelegramForbiddenError as exc:
         log_action(chat_id=int(session.selected_chat_id), action=action, status="error", error_type=type(exc).__name__, error_message=str(exc))
+        clear_action()
         if callback.message:
             await callback.message.edit_text(
                 error_text("Permissão insuficiente", "O Telegram recusou a criação do link.", "Confira se o bot é administrador do grupo e pode criar links de convite."),
@@ -496,6 +505,7 @@ async def tigrao_create_link(callback: CallbackQuery) -> None:
             )
     except Exception as exc:
         log_action(chat_id=int(session.selected_chat_id), action=action, status="error", error_type=type(exc).__name__, error_message=str(exc))
+        clear_action()
         if callback.message:
             await callback.message.edit_text(
                 error_text("Falha ao criar link", f"{type(exc).__name__}: {exc}", "Confira grupo e permissões do bot."),
