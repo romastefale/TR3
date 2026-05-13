@@ -134,6 +134,14 @@ def _plain(value: str) -> str:
     return html.escape(value, quote=False)
 
 
+def _bold(value: str) -> str:
+    return f"<b>{_plain(value)}</b>"
+
+
+def _italic(value: str) -> str:
+    return f"<i>{_plain(value)}</i>"
+
+
 def _fit_cover(image: Image.Image, size: int) -> Image.Image:
     image = image.convert("RGB")
     width, height = image.size
@@ -345,7 +353,7 @@ class LastfmCapsuleService:
         lines.extend(["", "♫ Top músicas"])
         for idx, ((artist, track), count) in enumerate(track_counts.most_common(5), 1):
             lines.append(
-                f"{idx}. {_plain(_shorten(track, 42))} — {_plain(_shorten(artist, 24))} {_format_number(count)} plays"
+                f"{idx}. {_bold(_shorten(track, 42))} — {_italic(_shorten(artist, 24))} {_format_number(count)} plays"
             )
 
         lines.extend(["", "◌ Disco mais ouvido"])
