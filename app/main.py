@@ -16,6 +16,7 @@ from app.moderation_tigrao import ddx_router as tigrao_ddx_router, router as tig
 from app.moderation_tigrao.ddx_runtime import tigrao_ddx_preprocess_update
 from app.moderation_tigrao.keyboards import home_keyboard
 from app.moderation_tigrao.permissions import is_owner_private_message
+from app.moderation_tigrao.storage import remember_group
 from app.moderation_tigrao.texts import home_text
 from app.services.music_proxy import install_music_proxy
 from app.services.spotify import spotify_service
@@ -53,6 +54,19 @@ def _log_message_update(update: Update) -> None:
         getattr(message.chat, "id", None),
         getattr(message.from_user, "id", None),
         token or "-",
+    )
+
+
+def _remember_group_from_update(update: Update) -> None:
+    message = update.message or update.edited_message
+    if not message or message.chat.type not in {"group", "supergroup"}:
+        return
+    title = message.chat.title or str(message.chat.id)
+    remember_group(int(message.chat.id), title)
+    logger.warning(
+        "TIGRAO_GROUP_REMEMBERED | chat_id=%s | title=%s",
+        message.chat.id,
+        title,
     )
 
 
@@ -170,6 +184,10 @@ async def telegram_webhook(request: Request):
             return {"ok": True}
         logger.warning("WEBHOOK_RECEIVED | update_id=%s", update.update_id)
         _log_message_update(update)
+        try:
+            _remember_group_from_update(update)
+        except Exception:
+            logger.exception("TIGRAO_GROUP_REMEMBER_FAILED | update_id=%s", update.update_id)
         try:
             tigrao_handled = await _handle_tigrao_direct(update)
         except Exception:
