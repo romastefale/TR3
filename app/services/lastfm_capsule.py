@@ -325,13 +325,12 @@ class LastfmCapsuleService:
             if album and artist:
                 album_counts[(artist, album)] += 1
 
-        minutes, _, covered_plays = await self._estimate_minutes(track_counts)
+        minutes, _, _ = await self._estimate_minutes(track_counts)
         photo_bytes = await self._build_collage(track_counts.most_common(MIN_COLLAGE_COVERS), image_urls)
 
         safe_name = html.escape(display_name or username)
         lines: list[str] = [
-            f"♫ <b>{html.escape(spec.label)} Sound Capsule</b>",
-            f"<i>{safe_name} · Last.fm mensal</i>",
+            f"<b>{safe_name}</b> · ♫ <b>{html.escape(spec.label)}</b>",
             "",
             "✦ <b>Top artistas</b>",
         ]
@@ -344,7 +343,7 @@ class LastfmCapsuleService:
             lines.append(
                 f"<b>{idx}.</b> <b>{html.escape(_shorten(track, 36))}</b> "
                 f"— <i>{html.escape(_shorten(artist, 24))}</i> "
-                f"<code>{_format_number(count)}</code>"
+                f"<code>{_format_number(count)} plays</code>"
             )
 
         lines.extend(["", "◌ <b>Disco mais ouvido</b>"])
@@ -358,11 +357,7 @@ class LastfmCapsuleService:
         lines.extend(["", "⌁ <b>Total do mês</b>"])
         lines.append(f"<b>{_format_number(total_reported)}</b> scrobbles")
         if minutes is not None:
-            coverage_note = ""
-            if covered_plays and total_reported:
-                coverage = round((covered_plays / max(total_reported, 1)) * 100)
-                coverage_note = f" · <i>cobertura {coverage}%</i>"
-            lines.append(f"<i>aprox.</i> <b>{_format_number(minutes)}</b> minutos ouvidos{coverage_note}")
+            lines.append(f"<i>aprox.</i> <b>{_format_number(minutes)}</b> minutos ouvidos")
         else:
             lines.append("<i>minutos ouvidos indisponíveis</i>")
 
