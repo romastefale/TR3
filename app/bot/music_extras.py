@@ -66,10 +66,7 @@ def _format_albnow(user_name: str, data: dict) -> str:
     return f"{safe_user} · <i>nada tocando agora</i>"
 
 
-async def _send_kingplay(message: Message, target_chat_id: int) -> bool:
-    if not message.from_user:
-        return False
-
+async def _send_kingplay(message: Message, target_chat_id: int, owner_user_id: int, owner_display_name: str) -> bool:
     try:
         chat = await message.bot.get_chat(target_chat_id)
         group_name_raw = _normalize_optional_text(chat.title)
@@ -77,9 +74,9 @@ async def _send_kingplay(message: Message, target_chat_id: int) -> bool:
         group_name_raw = _normalize_optional_text(str(target_chat_id))
 
     try:
-        track = await spotify_service.get_current_or_last_played(message.from_user.id)
+        track = await spotify_service.get_current_or_last_played(owner_user_id)
     except Exception:
-        logger.exception("Falha no /kingplay")
+        logger.exception("Falha no /kingplay | owner_user_id=%s", owner_user_id)
         await message.answer("Erro ao obter música.")
         return False
 
@@ -109,7 +106,11 @@ async def _send_kingplay(message: Message, target_chat_id: int) -> bool:
     except Exception:
         logger.exception("Falha ao fixar /kingplay")
 
-    await message.answer(f"Kingplay enviado.\nGrupo: {target_chat_id}\nMensagem: {sent.message_id}")
+    safe_owner = html.escape(owner_display_name or str(owner_user_id))
+    await message.answer(
+        f"Kingplay enviado.\nDono: {safe_owner}\nGrupo: {target_chat_id}\nMensagem: {sent.message_id}",
+        parse_mode="HTML",
+    )
     return True
 
 
@@ -140,7 +141,7 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
             except Exception:
                 await message.answer("chat_id inválido")
                 return
-            await _send_kingplay(message, target_chat_id)
+            await _send_kingplay(message, target_chat_id, message.from_user.id, message.from_user.full_name)
             return
 
         groups = list_groups()
@@ -163,7 +164,7 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
             await query.answer("chat_id inválido", show_alert=True)
             return
         await query.answer("Enviando...")
-        await _send_kingplay(query.message, target_chat_id)
+        await _send_kingplay(query.message, target_chat_id, query.from_user.id, query.from_user.full_name)
 
     @dp.callback_query(F.data == "kingplay:close")
     async def kingplay_close_callback(query: CallbackQuery) -> None:
