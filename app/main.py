@@ -46,8 +46,8 @@ async def on_startup() -> None:
     if TELEGRAM_BOT_TOKEN:
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
         if not _telegram_dispatcher_configured:
-            dispatcher.include_router(tigrao_router)
             dispatcher.include_router(tigrao_ddx_router)
+            dispatcher.include_router(tigrao_router)
             _register_handlers(dispatcher)
             _telegram_dispatcher_configured = True
         await bot.set_webhook(
