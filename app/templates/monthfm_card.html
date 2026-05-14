@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1080, initial-scale=1" />
+  <style>
+    :root {
+      --bg: {{ bg }};
+      --surface: {{ surface }};
+      --surface-soft: {{ surface_soft }};
+      --text: {{ text }};
+      --muted: {{ muted }};
+      --blue: {{ blue }};
+      --purple: {{ purple }};
+      --line: {{ line }};
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 1080px;
+      height: 1350px;
+      margin: 0;
+      overflow: hidden;
+      font-family: Inter, "SF Pro Display", "Segoe UI", Arial, sans-serif;
+      background:
+        radial-gradient(circle at 12% 8%, color-mix(in srgb, var(--blue) 28%, transparent), transparent 30%),
+        radial-gradient(circle at 88% 18%, color-mix(in srgb, var(--purple) 32%, transparent), transparent 34%),
+        var(--bg);
+      color: var(--text);
+    }
+
+    .card {
+      width: 1080px;
+      height: 1350px;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+    }
+
+    .hero {
+      position: relative;
+      width: 100%;
+      height: 430px;
+      overflow: hidden;
+      background: linear-gradient(135deg, var(--blue), var(--purple));
+    }
+
+    .hero-bg {
+      position: absolute;
+      inset: -40px;
+      background-image: url("{{ hero_image }}");
+      background-size: cover;
+      background-position: center;
+      filter: blur(28px) saturate(1.15);
+      transform: scale(1.08);
+      opacity: {{ hero_bg_opacity }};
+    }
+
+    .hero-overlay {
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, rgba(0,0,0,.12), rgba(0,0,0,.62)),
+        linear-gradient(120deg, color-mix(in srgb, var(--blue) 26%, transparent), color-mix(in srgb, var(--purple) 24%, transparent));
+    }
+
+    .hero-cover {
+      position: absolute;
+      right: 74px;
+      bottom: 54px;
+      width: 268px;
+      height: 268px;
+      object-fit: cover;
+      border-radius: 38px;
+      box-shadow: 0 32px 90px rgba(0,0,0,.42);
+      background: var(--surface-soft);
+    }
+
+    .hero-copy {
+      position: absolute;
+      left: 74px;
+      right: 390px;
+      bottom: 62px;
+    }
+
+    .brand {
+      font-size: 30px;
+      line-height: 1;
+      font-weight: 700;
+      letter-spacing: -.02em;
+      color: white;
+      opacity: .96;
+    }
+
+    .period {
+      margin-top: 18px;
+      font-size: 88px;
+      line-height: .95;
+      font-weight: 850;
+      letter-spacing: -.065em;
+      color: white;
+    }
+
+    .content {
+      flex: 1;
+      padding: 58px 72px 66px;
+      background: var(--surface);
+      border-top: 5px solid var(--purple);
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 54px;
+    }
+
+    .section-title {
+      margin: 0 0 24px;
+      color: var(--muted);
+      font-size: 26px;
+      font-weight: 750;
+      letter-spacing: -.015em;
+    }
+
+    .list {
+      display: flex;
+      flex-direction: column;
+      gap: 17px;
+    }
+
+    .row {
+      display: grid;
+      grid-template-columns: 44px minmax(0, 1fr) auto;
+      align-items: baseline;
+      gap: 14px;
+      min-height: 38px;
+    }
+
+    .rank {
+      font-size: 25px;
+      font-weight: 750;
+      color: var(--purple);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .name {
+      min-width: 0;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      font-size: 30px;
+      font-weight: 650;
+      letter-spacing: -.035em;
+      color: var(--text);
+    }
+
+    .subname {
+      display: block;
+      margin-top: 5px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      font-size: 20px;
+      font-style: italic;
+      font-weight: 500;
+      letter-spacing: -.02em;
+      color: var(--muted);
+    }
+
+    .count {
+      font-size: 24px;
+      font-weight: 750;
+      color: var(--blue);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .bottom {
+      display: grid;
+      grid-template-columns: 1.16fr .84fr;
+      gap: 46px;
+      margin-top: 58px;
+      padding-top: 42px;
+      border-top: 1px solid var(--line);
+    }
+
+    .album-box,
+    .total-box {
+      min-width: 0;
+      padding: 28px 30px;
+      border-radius: 32px;
+      background: var(--surface-soft);
+    }
+
+    .small-label {
+      margin: 0 0 14px;
+      font-size: 23px;
+      font-weight: 750;
+      color: var(--muted);
+    }
+
+    .album-title {
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      font-size: 31px;
+      line-height: 1.08;
+      font-weight: 800;
+      letter-spacing: -.04em;
+      color: var(--text);
+    }
+
+    .album-artist {
+      margin-top: 12px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      font-size: 23px;
+      font-style: italic;
+      color: var(--muted);
+    }
+
+    .total-main {
+      font-size: 46px;
+      line-height: 1;
+      font-weight: 850;
+      letter-spacing: -.055em;
+      color: var(--blue);
+      font-variant-numeric: tabular-nums;
+    }
+
+    .total-sub {
+      margin-top: 13px;
+      font-size: 26px;
+      font-weight: 650;
+      letter-spacing: -.025em;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <section class="hero">
+      <div class="hero-bg"></div>
+      <div class="hero-overlay"></div>
+      <img class="hero-cover" src="{{ hero_image }}" alt="" />
+      <div class="hero-copy">
+        <div class="brand">♫ {{ bot_name }}</div>
+        <div class="period">{{ title }}</div>
+      </div>
+    </section>
+
+    <section class="content">
+      <div class="grid">
+        <div>
+          <h2 class="section-title">✦ Top artistas</h2>
+          <div class="list">
+            {{ artist_rows }}
+          </div>
+        </div>
+
+        <div>
+          <h2 class="section-title">♫ Top músicas</h2>
+          <div class="list">
+            {{ track_rows }}
+          </div>
+        </div>
+      </div>
+
+      <div class="bottom">
+        <div class="album-box">
+          <p class="small-label">◌ Disco mais ouvido</p>
+          <div class="album-title">{{ album_name }}</div>
+          <div class="album-artist">{{ album_artist }} · {{ album_count }} scrobbles</div>
+        </div>
+        <div class="total-box">
+          <p class="small-label">⌁ Total</p>
+          <div class="total-main">{{ total_scrobbles }}</div>
+          <div class="total-sub">{{ minutes }} minutos</div>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
