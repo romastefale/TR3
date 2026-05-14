@@ -10,6 +10,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 
 from app.bot.monthfm import monthfm as monthfm_command, router as monthfm_router
+from app.bot.weekfm import router as weekfm_router, weekfm as weekfm_command
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
 from app.db.database import engine, init_db, run_migrations
@@ -65,6 +66,10 @@ def _is_tigrao_command(text_value: str | None) -> bool:
 
 def _is_monthfm_command(text_value: str | None) -> bool:
     return _command_name(text_value) == "/monthfm"
+
+
+def _is_weekfm_command(text_value: str | None) -> bool:
+    return _command_name(text_value) == "/weekfm"
 
 
 def _log_message_update(update: Update) -> None:
@@ -147,6 +152,23 @@ async def _handle_monthfm_direct(update: Update) -> bool:
     return True
 
 
+async def _handle_weekfm_direct(update: Update) -> bool:
+    message = update.message
+    if not message or not _is_weekfm_command(message.text):
+        return False
+    logger.warning(
+        "WEEKFM_DIRECT_RECEIVED | update_id=%s | chat_type=%s | chat_id=%s | from_id=%s | token=%s",
+        update.update_id,
+        getattr(message.chat, "type", None),
+        getattr(message.chat, "id", None),
+        getattr(message.from_user, "id", None),
+        _first_token(message.text),
+    )
+    await weekfm_command(message)
+    logger.warning("WEEKFM_DIRECT_ANSWER_SENT | update_id=%s", update.update_id)
+    return True
+
+
 async def _handle_tigrao_waiting_text_direct(update: Update) -> bool:
     message = update.message
     if not message or not message.text:
@@ -224,6 +246,7 @@ async def on_startup() -> None:
             dispatcher.include_router(tigrao_member_tag_router)
             dispatcher.include_router(tigrao_router)
             dispatcher.include_router(monthfm_router)
+            dispatcher.include_router(weekfm_router)
             _register_handlers(dispatcher)
             _telegram_dispatcher_configured = True
         await bot.set_webhook(
@@ -298,6 +321,13 @@ async def telegram_webhook(request: Request):
             logger.exception("MONTHFM_DIRECT_FAILED | update_id=%s", update.update_id)
             monthfm_handled = False
         if monthfm_handled:
+            return {"ok": True}
+        try:
+            weekfm_handled = await _handle_weekfm_direct(update)
+        except Exception:
+            logger.exception("WEEKFM_DIRECT_FAILED | update_id=%s", update.update_id)
+            weekfm_handled = False
+        if weekfm_handled:
             return {"ok": True}
         try:
             tigrao_waiting_media_handled = await _handle_tigrao_waiting_media_direct(update)
