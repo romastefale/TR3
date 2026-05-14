@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any
 
 from app.config.settings import LASTFM_API_KEY
 from app.services.lastfm import lastfm_service
@@ -21,6 +20,7 @@ from app.services.lastfm_capsule import (
     _track_key,
     _best_image_url,
 )
+from app.services.monthfm_card import CardArtist, CardTrack, MonthfmCardData
 
 
 @dataclass(frozen=True)
@@ -76,7 +76,7 @@ class LastfmWeeklyService(LastfmCapsuleService):
         except Exception:
             return CapsuleResult("Semana inválida. Use /weekfm, /weekfm 2026-05-06 ou /weekfm 2026-05-06 2026-05-13.")
 
-        recent_items, total_reported, capped = await self._recent_tracks(username, spec)  # type: ignore[arg-type]
+        recent_items, total_reported, capped = await self._recent_tracks(username, spec)
         if not recent_items:
             return CapsuleResult(f"♫ Extrato da semana\n{_plain(spec.label)}\n\nNenhum scrobble encontrado para @{_plain(username)} nesse período.")
 
@@ -102,6 +102,28 @@ class LastfmWeeklyService(LastfmCapsuleService):
         minutes, _, _ = await self._estimate_minutes(track_counts)
         photo_bytes = await self._build_collage(track_counts.most_common(MIN_COLLAGE_COVERS), image_urls)
 
+        top_artists = artist_counts.most_common(5)
+        top_tracks = track_counts.most_common(5)
+        top_album = album_counts.most_common(1)
+        album_artist = top_album[0][0][0] if top_album else "Last.fm"
+        album_name = top_album[0][0][1] if top_album else "Sem disco identificado"
+        album_count = top_album[0][1] if top_album else 0
+        hero_key = top_tracks[0][0] if top_tracks else None
+        hero_image = image_urls.get(hero_key) if hero_key else None
+
+        card_data = MonthfmCardData(
+            title="Extrato da semana",
+            theme="dark",
+            hero_image_url=hero_image,
+            top_artists=tuple(CardArtist(name=artist, count=count) for artist, count in top_artists),
+            top_tracks=tuple(CardTrack(title=track, artist=artist, plays=count) for (artist, track), count in top_tracks),
+            album_name=album_name,
+            album_artist=album_artist,
+            album_count=album_count,
+            total_scrobbles=total_reported,
+            minutes=minutes,
+        )
+
         safe_name = _plain(display_name or username)
         lines: list[str] = [
             f"{safe_name} · ♫ Extrato da semana",
@@ -110,16 +132,15 @@ class LastfmWeeklyService(LastfmCapsuleService):
             "✦ Top artistas",
         ]
 
-        for idx, (artist, count) in enumerate(artist_counts.most_common(5), 1):
+        for idx, (artist, count) in enumerate(top_artists, 1):
             lines.append(f"{idx}. {_plain(_shorten(artist))} — {_format_number(count)} scrobbles")
 
         lines.extend(["", "♫ Top músicas"])
-        for idx, ((artist, track), count) in enumerate(track_counts.most_common(5), 1):
+        for idx, ((artist, track), count) in enumerate(top_tracks, 1):
             lines.append(f"{idx}. {_bold(_shorten(track, 42))} — {_italic(_shorten(artist, 24))} {_format_number(count)} plays")
 
         lines.extend(["", "◌ Disco mais ouvido"])
-        if album_counts:
-            (album_artist, album_name), album_count = album_counts.most_common(1)[0]
+        if top_album:
             lines.append(_plain(_shorten(album_name, 44)))
             lines.append(f"{_plain(_shorten(album_artist, 30))} · {_format_number(album_count)} scrobbles")
         else:
@@ -135,7 +156,7 @@ class LastfmWeeklyService(LastfmCapsuleService):
         if capped:
             lines.extend(["", "Resultado parcial: o período tem mais scrobbles do que o limite seguro de leitura do bot."])
 
-        return CapsuleResult("\n".join(lines), photo_bytes=photo_bytes)
+        return CapsuleResult("\n".join(lines), photo_bytes=photo_bytes, card_data=card_data)
 
 
 lastfm_weekly_service = LastfmWeeklyService()
