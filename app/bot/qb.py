@@ -3,7 +3,7 @@ from __future__ import annotations
 import html
 import logging
 
-from aiogram import Bot, F, Router
+from aiogram import F, Router
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, ChatPermissions, InlineKeyboardButton, InlineKeyboardMarkup, Message
 
@@ -12,11 +12,7 @@ router = Router(name="qb")
 
 
 def _safe_button(text: str, callback_data: str, style: str | None = None) -> InlineKeyboardButton:
-    """Create an inline button with optional Telegram client color style.
-
-    Some aiogram/Bot API environments do not expose the experimental style
-    argument, so this helper keeps /qb removable and safe.
-    """
+    """Create an inline button with optional Telegram client color style."""
     try:
         if style:
             return InlineKeyboardButton(text=text, callback_data=callback_data, style=style)  # type: ignore[call-arg]
@@ -36,9 +32,9 @@ def qb_keyboard(chat_id: int, user_id: int) -> InlineKeyboardMarkup:
     )
 
 
-async def is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
+async def is_admin(message_or_callback: Message | CallbackQuery, chat_id: int, user_id: int) -> bool:
     try:
-        member = await bot.get_chat_member(chat_id, user_id)
+        member = await message_or_callback.bot.get_chat_member(chat_id, user_id)
     except Exception:
         logger.exception("QB_ADMIN_CHECK_FAILED | chat_id=%s | user_id=%s", chat_id, user_id)
         return False
@@ -46,16 +42,27 @@ async def is_admin(bot: Bot, chat_id: int, user_id: int) -> bool:
 
 
 @router.message(Command("qb"))
-async def qb_panel(message: Message, bot: Bot) -> None:
+async def qb_panel(message: Message) -> None:
+    logger.warning(
+        "QB_HANDLER_RECEIVED | chat_type=%s | chat_id=%s | from_id=%s | has_reply=%s",
+        getattr(message.chat, "type", None),
+        getattr(message.chat, "id", None),
+        getattr(message.from_user, "id", None),
+        bool(message.reply_to_message),
+    )
     if not message.from_user:
+        logger.warning("QB_HANDLER_SKIP | reason=no_from_user")
         return
     if message.chat.type not in {"group", "supergroup"}:
+        logger.warning("QB_HANDLER_PRIVATE_OR_UNSUPPORTED | chat_type=%s", message.chat.type)
         await message.reply("Use /qb respondendo a mensagem de um usuário dentro do grupo.")
         return
     if not message.reply_to_message or not message.reply_to_message.from_user:
+        logger.warning("QB_HANDLER_NO_REPLY | chat_id=%s | from_id=%s", message.chat.id, message.from_user.id)
         await message.reply("Responda a mensagem do usuário.")
         return
-    if not await is_admin(bot, message.chat.id, message.from_user.id):
+    if not await is_admin(message, message.chat.id, message.from_user.id):
+        logger.warning("QB_HANDLER_DENIED | chat_id=%s | from_id=%s", message.chat.id, message.from_user.id)
         await message.reply("Sem permissão.")
         return
 
@@ -74,10 +81,16 @@ async def qb_panel(message: Message, bot: Bot) -> None:
         reply_markup=qb_keyboard(message.chat.id, target.id),
         parse_mode="HTML",
     )
+    logger.warning("QB_HANDLER_ANSWER_SENT | chat_id=%s | target_id=%s", message.chat.id, target.id)
 
 
 @router.callback_query(F.data.startswith("qb:"))
-async def qb_callback(callback: CallbackQuery, bot: Bot) -> None:
+async def qb_callback(callback: CallbackQuery) -> None:
+    logger.warning(
+        "QB_CALLBACK_RECEIVED | from_id=%s | data=%s",
+        getattr(callback.from_user, "id", None),
+        callback.data,
+    )
     if not callback.data or not callback.from_user:
         return
 
@@ -94,7 +107,8 @@ async def qb_callback(callback: CallbackQuery, bot: Bot) -> None:
         await callback.answer("Dados inválidos.", show_alert=True)
         return
 
-    if not await is_admin(bot, chat_id, callback.from_user.id):
+    if not await is_admin(callback, chat_id, callback.from_user.id):
+        logger.warning("QB_CALLBACK_DENIED | chat_id=%s | from_id=%s", chat_id, callback.from_user.id)
         await callback.answer("Sem permissão.", show_alert=True)
         return
 
@@ -104,14 +118,14 @@ async def qb_callback(callback: CallbackQuery, bot: Bot) -> None:
 
     try:
         if action == "mute":
-            await bot.restrict_chat_member(
+            await callback.bot.restrict_chat_member(
                 chat_id=chat_id,
                 user_id=target_id,
                 permissions=ChatPermissions(can_send_messages=False),
             )
             result = f"{callback.message.html_text}\n\n~ Usuário <code>{target_id}</code> foi 🔇 silenciado."
         elif action == "ban":
-            await bot.ban_chat_member(chat_id=chat_id, user_id=target_id)
+            await callback.bot.ban_chat_member(chat_id=chat_id, user_id=target_id)
             result = f"{callback.message.html_text}\n\n~ Usuário <code>{target_id}</code> foi 🚷 banido."
         else:
             await callback.answer("Ação inválida.", show_alert=True)
@@ -123,3 +137,4 @@ async def qb_callback(callback: CallbackQuery, bot: Bot) -> None:
 
     await callback.message.edit_text(result, parse_mode="HTML")
     await callback.answer("Ação executada.")
+    logger.warning("QB_CALLBACK_DONE | action=%s | chat_id=%s | target_id=%s", action, chat_id, target_id)
