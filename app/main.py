@@ -10,7 +10,6 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 
 from app.bot.monthfm import monthfm as monthfm_command, router as monthfm_router
-from app.bot.qb import router as qb_router
 from app.bot.weekfm import router as weekfm_router, weekfm as weekfm_command
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
@@ -242,7 +241,6 @@ async def on_startup() -> None:
     if TELEGRAM_BOT_TOKEN:
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
         if not _telegram_dispatcher_configured:
-            dispatcher.include_router(qb_router)
             dispatcher.include_router(tigrao_ddx_router)
             dispatcher.include_router(tigrao_customize_router)
             dispatcher.include_router(tigrao_member_tag_router)
