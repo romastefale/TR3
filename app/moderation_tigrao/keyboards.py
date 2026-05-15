@@ -82,6 +82,7 @@ def customize_keyboard() -> InlineKeyboardMarkup:
         [_button("Enviar mensagem", "tigrao:message:send", "primary")],
         [_button("Enviar e fixar", "tigrao:message:pin", "primary")],
         [_button("Enviar mídia", "tigrao:message:media", "primary")],
+        [_button("Enviar mídia e fixar", "tigrao:message:media_pin", "primary")],
         [_button("Alterar foto do grupo", "tigrao:customize:photo", "primary")],
         [_button("Alterar nome", "tigrao:customize:title", "primary"), _button("Alterar bio", "tigrao:customize:bio", "primary")],
         [_button("Tag de membro", "tigrao:customize:member_tag", "primary")],
