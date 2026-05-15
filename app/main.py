@@ -14,7 +14,7 @@ from app.bot.weekfm import router as weekfm_router, weekfm as weekfm_command
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
 from app.db.database import engine, init_db, run_migrations
-from app.moderation_tigrao import customize_router as tigrao_customize_router, ddx_router as tigrao_ddx_router, member_tag_router as tigrao_member_tag_router, router as tigrao_router
+from app.moderation_tigrao import customize_router as tigrao_customize_router, ddx_router as tigrao_ddx_router, member_tag_router as tigrao_member_tag_router, pinned_media_router as tigrao_pinned_media_router, router as tigrao_router
 from app.moderation_tigrao.customize_router import tigrao_receive_group_photo
 from app.moderation_tigrao.ddx_router import tigrao_ddx_receive_add_words, tigrao_ddx_receive_remove_words
 from app.moderation_tigrao.ddx_runtime import tigrao_ddx_preprocess_update
@@ -244,6 +244,7 @@ async def on_startup() -> None:
             dispatcher.include_router(tigrao_ddx_router)
             dispatcher.include_router(tigrao_customize_router)
             dispatcher.include_router(tigrao_member_tag_router)
+            dispatcher.include_router(tigrao_pinned_media_router)
             dispatcher.include_router(tigrao_router)
             dispatcher.include_router(monthfm_router)
             dispatcher.include_router(weekfm_router)
@@ -344,16 +345,14 @@ async def telegram_webhook(request: Request):
         if tigrao_waiting_text_handled:
             return {"ok": True}
         try:
-            ddx_deleted = await tigrao_ddx_preprocess_update(bot, update)
+            ddx_handled = await tigrao_ddx_preprocess_update(bot, update)
         except Exception:
             logger.exception("TIGRAO_DDX_PREPROCESS_FAILED | update_id=%s", update.update_id)
-            ddx_deleted = False
-        if not ddx_deleted:
-            try:
-                await dispatcher.feed_update(bot, update)
-            except Exception:
-                logger.exception("DISPATCHER_FAILED | update_id=%s", update.update_id)
+            ddx_handled = False
+        if ddx_handled:
+            return {"ok": True}
+        await dispatcher.feed_update(bot, update)
         return {"ok": True}
     except Exception:
-        logger.exception("WEBHOOK_PARSE_FAILED")
+        logger.exception("WEBHOOK_ERROR")
         return {"ok": True}
