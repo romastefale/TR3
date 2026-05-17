@@ -131,25 +131,6 @@ async def tigrao_ddx_preprocess_update(bot, update) -> bool:
         return False
 
     try:
-        member = await bot.get_chat_member(message.chat.id, message.from_user.id)
-        if member.status in {"administrator", "creator"}:
-            logger.warning(
-                "TIGRAO_DDX_SKIP_ADMIN | chat_id=%s | user_id=%s | message_id=%s",
-                message.chat.id,
-                message.from_user.id,
-                message.message_id,
-            )
-            return False
-    except Exception:
-        logger.exception(
-            "TIGRAO_DDX_ADMIN_CHECK_FAILED | chat_id=%s | user_id=%s | message_id=%s",
-            message.chat.id,
-            getattr(message.from_user, "id", None),
-            message.message_id,
-        )
-        return False
-
-    try:
         await bot.delete_message(chat_id=message.chat.id, message_id=message.message_id)
         log_action(
             chat_id=int(message.chat.id),
