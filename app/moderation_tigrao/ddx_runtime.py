@@ -119,7 +119,7 @@ async def tigrao_ddx_preprocess_update(bot, update) -> bool:
         return False
 
     text_value = message.text or message.caption
-    if not text_value or not message.from_user or message.from_user.is_bot:
+    if not text_value or not message.from_user:
         return False
 
     row = get_ddx_filters(int(message.chat.id))
