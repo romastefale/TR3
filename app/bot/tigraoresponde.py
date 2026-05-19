@@ -13,6 +13,7 @@ TIGRAORESPONDE_TARGET_CHAT_ID = -1003839856024
 TIGRAORESPONDE_PREFIX = "Mira,"
 TIGRAORESPONDE_PROMPT = "Qual é a sua pergunta?"
 TIGRAORESPONDE_TTL_SECONDS = 180
+TIGRAORESPONDE_CONTINUATION_TTL_SECONDS = 900
 
 
 @dataclass
@@ -28,10 +29,21 @@ class PendingTigraoQuestion:
     relay_message_id: int | None = None
     waiting_notice_chat_id: int | None = None
     waiting_notice_message_id: int | None = None
+    target_context_message_id: int | None = None
+
+
+@dataclass
+class TigraoContinuation:
+    user_id: int
+    origin_chat_id: int
+    answer_message_id: int
+    target_context_message_id: int
+    expires_at: datetime
 
 
 _pending_by_prompt: dict[tuple[int, int], PendingTigraoQuestion] = {}
 _pending_by_relay_message_id: dict[int, PendingTigraoQuestion] = {}
+_continuation_by_answer: dict[tuple[int, int], TigraoContinuation] = {}
 
 
 def _first_token(text_value: str | None) -> str:
@@ -63,6 +75,10 @@ def _cleanup_expired() -> None:
     for message_id in expired_relay_ids:
         _pending_by_relay_message_id.pop(message_id, None)
 
+    expired_continuation_keys = [key for key, item in _continuation_by_answer.items() if item.expires_at <= current]
+    for key in expired_continuation_keys:
+        _continuation_by_answer.pop(key, None)
+
 
 def _find_pending_prompt(message: Message) -> PendingTigraoQuestion | None:
     if not message.reply_to_message:
@@ -74,6 +90,12 @@ def _find_pending_relay(message: Message) -> PendingTigraoQuestion | None:
     if message.chat.id != TIGRAORESPONDE_TARGET_CHAT_ID or not message.reply_to_message:
         return None
     return _pending_by_relay_message_id.get(message.reply_to_message.message_id)
+
+
+def _find_continuation(message: Message) -> TigraoContinuation | None:
+    if not message.reply_to_message:
+        return None
+    return _continuation_by_answer.get((message.chat.id, message.reply_to_message.message_id))
 
 
 async def _delete_waiting_notice(bot: Bot, pending: PendingTigraoQuestion) -> None:
@@ -95,6 +117,24 @@ async def _delete_waiting_notice(bot: Bot, pending: PendingTigraoQuestion) -> No
             pending.waiting_notice_chat_id,
             pending.waiting_notice_message_id,
         )
+
+
+async def _send_relay(bot: Bot, question_text: str, target_context_message_id: int | None = None) -> Message:
+    text = f"{TIGRAORESPONDE_PREFIX} {question_text}"
+    if target_context_message_id is not None:
+        try:
+            return await bot.send_message(
+                TIGRAORESPONDE_TARGET_CHAT_ID,
+                text,
+                reply_to_message_id=target_context_message_id,
+            )
+        except Exception:
+            logger.exception(
+                "TIGRAORESPONDE_CONTEXT_RELAY_FAILED | target_chat_id=%s | context_message_id=%s",
+                TIGRAORESPONDE_TARGET_CHAT_ID,
+                target_context_message_id,
+            )
+    return await bot.send_message(TIGRAORESPONDE_TARGET_CHAT_ID, text)
 
 
 async def _start_tigraoresponde(message: Message) -> bool:
@@ -127,6 +167,40 @@ async def _start_tigraoresponde(message: Message) -> bool:
     return True
 
 
+async def _relay_user_question(bot: Bot, message: Message, pending: PendingTigraoQuestion) -> bool:
+    question_text = (message.text or "").strip()
+    if not question_text:
+        await message.reply("Envie a pergunta em texto.")
+        return True
+    if question_text.startswith("/"):
+        await message.reply("Envie a pergunta em texto, não outro comando.")
+        return True
+
+    relay = await _send_relay(bot, question_text, pending.target_context_message_id)
+    pending.origin_chat_id = message.chat.id
+    pending.origin_message_id = message.message_id
+    pending.question_text = question_text
+    pending.relay_message_id = relay.message_id
+    pending.expires_at = _now() + timedelta(seconds=TIGRAORESPONDE_TTL_SECONDS)
+    _pending_by_prompt.pop((pending.prompt_chat_id, pending.prompt_message_id), None)
+    _pending_by_relay_message_id[relay.message_id] = pending
+
+    waiting_notice = await message.answer("Pergunta enviada. Vou retornar a resposta aqui quando ela chegar.")
+    pending.waiting_notice_chat_id = waiting_notice.chat.id
+    pending.waiting_notice_message_id = waiting_notice.message_id
+    logger.warning(
+        "TIGRAORESPONDE_RELAY_SENT | origin_chat_id=%s | origin_message_id=%s | user_id=%s | target_chat_id=%s | relay_message_id=%s | waiting_notice_message_id=%s | target_context_message_id=%s",
+        pending.origin_chat_id,
+        pending.origin_message_id,
+        pending.user_id,
+        TIGRAORESPONDE_TARGET_CHAT_ID,
+        relay.message_id,
+        waiting_notice.message_id,
+        pending.target_context_message_id,
+    )
+    return True
+
+
 async def _handle_user_question(bot: Bot, message: Message) -> bool:
     pending = _find_pending_prompt(message)
     if pending is None:
@@ -143,39 +217,37 @@ async def _handle_user_question(bot: Bot, message: Message) -> bool:
         )
         return True
 
-    question_text = (message.text or "").strip()
-    if not question_text:
-        await message.reply("Envie a pergunta em texto.")
+    return await _relay_user_question(bot, message, pending)
+
+
+async def _handle_continuation_question(bot: Bot, message: Message) -> bool:
+    continuation = _find_continuation(message)
+    if continuation is None:
+        return False
+    if not message.from_user:
         return True
-    if question_text.startswith("/"):
-        await message.reply("Envie a pergunta em texto, não outro comando.")
+    if message.from_user.id != continuation.user_id:
+        await message.reply("Apenas quem fez a pergunta original pode continuar essa conversa.")
+        logger.warning(
+            "TIGRAORESPONDE_CONTINUATION_DENIED | chat_id=%s | expected_user_id=%s | from_id=%s | answer_message_id=%s",
+            message.chat.id,
+            continuation.user_id,
+            message.from_user.id,
+            continuation.answer_message_id,
+        )
         return True
 
-    relay = await bot.send_message(
-        TIGRAORESPONDE_TARGET_CHAT_ID,
-        f"{TIGRAORESPONDE_PREFIX} {question_text}",
+    pending = PendingTigraoQuestion(
+        user_id=continuation.user_id,
+        origin_chat_id=message.chat.id,
+        origin_message_id=message.message_id,
+        prompt_chat_id=0,
+        prompt_message_id=0,
+        created_at=_now(),
+        expires_at=_now() + timedelta(seconds=TIGRAORESPONDE_TTL_SECONDS),
+        target_context_message_id=continuation.target_context_message_id,
     )
-    pending.origin_chat_id = message.chat.id
-    pending.origin_message_id = message.message_id
-    pending.question_text = question_text
-    pending.relay_message_id = relay.message_id
-    pending.expires_at = _now() + timedelta(seconds=TIGRAORESPONDE_TTL_SECONDS)
-    _pending_by_prompt.pop((pending.prompt_chat_id, pending.prompt_message_id), None)
-    _pending_by_relay_message_id[relay.message_id] = pending
-
-    waiting_notice = await message.answer("Pergunta enviada. Vou retornar a resposta aqui quando ela chegar.")
-    pending.waiting_notice_chat_id = waiting_notice.chat.id
-    pending.waiting_notice_message_id = waiting_notice.message_id
-    logger.warning(
-        "TIGRAORESPONDE_RELAY_SENT | origin_chat_id=%s | origin_message_id=%s | user_id=%s | target_chat_id=%s | relay_message_id=%s | waiting_notice_message_id=%s",
-        pending.origin_chat_id,
-        pending.origin_message_id,
-        pending.user_id,
-        TIGRAORESPONDE_TARGET_CHAT_ID,
-        relay.message_id,
-        waiting_notice.message_id,
-    )
-    return True
+    return await _relay_user_question(bot, message, pending)
 
 
 async def _handle_mira_reply(bot: Bot, message: Message) -> bool:
@@ -187,19 +259,27 @@ async def _handle_mira_reply(bot: Bot, message: Message) -> bool:
     if not answer_text:
         answer_text = "Recebi uma resposta, mas ela não veio em texto."
 
-    await bot.send_message(
+    answer_message = await bot.send_message(
         pending.origin_chat_id,
         answer_text,
         reply_to_message_id=pending.origin_message_id,
+    )
+    _continuation_by_answer[(pending.origin_chat_id, answer_message.message_id)] = TigraoContinuation(
+        user_id=pending.user_id,
+        origin_chat_id=pending.origin_chat_id,
+        answer_message_id=answer_message.message_id,
+        target_context_message_id=message.message_id,
+        expires_at=_now() + timedelta(seconds=TIGRAORESPONDE_CONTINUATION_TTL_SECONDS),
     )
     await _delete_waiting_notice(bot, pending)
     if pending.relay_message_id is not None:
         _pending_by_relay_message_id.pop(pending.relay_message_id, None)
 
     logger.warning(
-        "TIGRAORESPONDE_ANSWER_RETURNED | origin_chat_id=%s | origin_message_id=%s | user_id=%s | relay_message_id=%s | answer_message_id=%s",
+        "TIGRAORESPONDE_ANSWER_RETURNED | origin_chat_id=%s | origin_message_id=%s | answer_message_id=%s | user_id=%s | relay_message_id=%s | target_answer_message_id=%s",
         pending.origin_chat_id,
         pending.origin_message_id,
+        answer_message.message_id,
         pending.user_id,
         pending.relay_message_id,
         message.message_id,
@@ -220,6 +300,10 @@ async def handle_tigraoresponde_update(bot: Bot, update: Update) -> bool:
     if message.reply_to_message and message.text:
         question_handled = await _handle_user_question(bot, message)
         if question_handled:
+            return True
+
+        continuation_handled = await _handle_continuation_question(bot, message)
+        if continuation_handled:
             return True
 
     if message.reply_to_message and message.chat.id == TIGRAORESPONDE_TARGET_CHAT_ID:
