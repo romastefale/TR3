@@ -22,6 +22,7 @@ from app.services.lastfm import lastfm_service
 from app.services.likes import likes_service
 from app.services.music import music_service
 from app.services.spotify import spotify_service
+from app.services.spotify_canvas import spotify_canvas_service
 
 logger = logging.getLogger(__name__)
 bot_dispatcher: Dispatcher = Dispatcher()
@@ -188,7 +189,10 @@ async def _send_live(message: Message) -> None:
         f"♫ <b>{track_name}</b> — <i>{artist}</i>"
     )
 
-    if cover:
+    canvas_url = await spotify_canvas_service.get_canvas_url(track_id)
+    if canvas_url:
+        await message.answer_video(video=canvas_url, caption=caption, parse_mode="HTML")
+    elif cover:
         await message.answer_photo(photo=str(cover), caption=caption, parse_mode="HTML")
     else:
         await message.answer(caption, parse_mode="HTML")
