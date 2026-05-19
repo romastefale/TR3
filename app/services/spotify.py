@@ -22,8 +22,19 @@ logger = logging.getLogger(__name__)
 
 
 class SpotifyService:
+    def __init__(self) -> None:
+        self._client_access_token: str | None = None
+        self._client_token_expiration: datetime | None = None
+
     async def shutdown(self) -> None:
         logger.info("Spotify service stopped.")
+
+    def _client_token_valid(self) -> bool:
+        return bool(
+            self._client_access_token
+            and self._client_token_expiration
+            and self._client_token_expiration > datetime.utcnow() + timedelta(seconds=60)
+        )
 
     def build_auth_url(self, user_id: int) -> str:
         return (
@@ -174,6 +185,62 @@ class SpotifyService:
             source="spotify_last",
             played_at=items[0].get("played_at"),
         )
+
+    async def _get_client_credentials_token(self) -> str | None:
+        if self._client_token_valid():
+            return self._client_access_token
+        if not SPOTIFY_CLIENT_ID or not SPOTIFY_CLIENT_SECRET:
+            logger.error("Spotify client credentials are not configured.")
+            return None
+
+        auth_str = f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}"
+        b64_auth = base64.b64encode(auth_str.encode()).decode()
+
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+            response = await client.post(
+                "https://accounts.spotify.com/api/token",
+                data={"grant_type": "client_credentials"},
+                headers={
+                    "Authorization": f"Basic {b64_auth}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+            )
+
+        if response.status_code != 200:
+            logger.error("Spotify client credentials token failed: %s", response.text)
+            return None
+
+        data = response.json()
+        access_token = data.get("access_token")
+        expires_in = data.get("expires_in")
+        if not access_token or not expires_in:
+            logger.error("Invalid Spotify client credentials response: %s", data)
+            return None
+
+        self._client_access_token = str(access_token)
+        self._client_token_expiration = datetime.utcnow() + timedelta(seconds=int(expires_in))
+        return self._client_access_token
+
+    async def get_track_by_id(self, track_id: str) -> dict[str, Any] | None:
+        clean_track_id = (track_id or "").strip()
+        if not clean_track_id:
+            return None
+
+        access_token = await self._get_client_credentials_token()
+        if not access_token:
+            return None
+
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+            response = await client.get(
+                f"https://api.spotify.com/v1/tracks/{clean_track_id}",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
+
+        if response.status_code != 200:
+            logger.error("Spotify track lookup failed: status=%s body=%s", response.status_code, response.text)
+            return None
+
+        return self._map_track(response.json(), source="spotify_link", played_at=None)
 
     def _map_track(self, item: dict[str, Any], source: str, played_at: str | None) -> dict[str, Any] | None:
         if not item:
