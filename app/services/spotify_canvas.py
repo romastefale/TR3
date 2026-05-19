@@ -7,7 +7,6 @@ import httpx
 
 from app.config.settings import (
     SPOTIFY_CANVAS_ENABLED,
-    SPOTIFY_CANVAS_SP_DC,
     SPOTIFY_CANVAS_TIMEOUT_SECONDS,
 )
 
@@ -16,13 +15,16 @@ logger = logging.getLogger(__name__)
 CANVAS_TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
 CANVAS_API_URL = "https://spclient.wg.spotify.com/canvaz-cache/v0/canvases"
 CANVAS_URL_RE = re.compile(rb"https://canvaz\.scdn\.co/[^\x00\s\"'<>]+")
-WEB_HEADERS = {
+TOKEN_HEADERS = {
     "Accept": "application/json, text/plain, */*",
-    "Accept-Language": "en-US,en;q=0.9,pt-BR;q=0.8,pt;q=0.7",
-    "App-Platform": "WebPlayer",
-    "Origin": "https://open.spotify.com",
-    "Referer": "https://open.spotify.com/",
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+}
+CANVAS_HEADERS = {
+    "Accept": "application/protobuf",
+    "Content-Type": "application/x-www-form-urlencoded",
+    "Accept-Language": "en",
+    "User-Agent": "Spotify/8.5.49 iOS/Version 13.3.1 (Build 17D50)",
+    "Accept-Encoding": "gzip, deflate, br",
 }
 
 
@@ -122,9 +124,6 @@ class SpotifyCanvasService:
         if not SPOTIFY_CANVAS_ENABLED:
             logger.info("Spotify Canvas skipped: disabled")
             return None
-        if not SPOTIFY_CANVAS_SP_DC:
-            logger.info("Spotify Canvas skipped: missing SPOTIFY_CANVAS_SP_DC")
-            return None
         if not clean_track_id:
             logger.info("Spotify Canvas skipped: empty track_id")
             return None
@@ -145,10 +144,8 @@ class SpotifyCanvasService:
             return None
 
     async def _get_access_token(self) -> str | None:
-        headers = dict(WEB_HEADERS)
-        headers["Cookie"] = f"sp_dc={SPOTIFY_CANVAS_SP_DC}"
         async with httpx.AsyncClient(timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS, follow_redirects=True) as client:
-            response = await client.get(CANVAS_TOKEN_URL, headers=headers)
+            response = await client.get(CANVAS_TOKEN_URL, headers=TOKEN_HEADERS)
         if response.status_code != 200:
             logger.warning("Spotify Canvas token failed: status=%s body=%s", response.status_code, response.text[:200])
             return None
@@ -165,14 +162,8 @@ class SpotifyCanvasService:
 
     async def _fetch_canvas_url(self, track_id: str, access_token: str) -> str | None:
         payload = _encode_canvas_request(track_id)
-        headers = dict(WEB_HEADERS)
-        headers.update(
-            {
-                "Authorization": f"Bearer {access_token}",
-                "Content-Type": "application/x-protobuf",
-                "Accept": "application/x-protobuf",
-            }
-        )
+        headers = dict(CANVAS_HEADERS)
+        headers["Authorization"] = f"Bearer {access_token}"
         async with httpx.AsyncClient(timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS, follow_redirects=True) as client:
             response = await client.post(CANVAS_API_URL, content=payload, headers=headers)
         if response.status_code != 200:
