@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import html
 import logging
+import re
 import uuid
 
 from aiogram import Dispatcher, F
@@ -24,6 +25,10 @@ from app.services.spotify import spotify_service
 
 logger = logging.getLogger(__name__)
 bot_dispatcher: Dispatcher = Dispatcher()
+SPOTIFY_TRACK_RE = re.compile(
+    r"(?:open\.spotify\.com/(?:intl-[a-z]{2}/)?track/|spotify:track:)([A-Za-z0-9]{22})",
+    re.IGNORECASE,
+)
 
 MOOD_PHRASES_NORMAL = {
     0: "☹︎ <i>Acho que <b>{name}</b> está no fundo de um abismo, onde até o silêncio pesa.</i>",
@@ -97,6 +102,15 @@ def _user_mention(message: Message) -> str:
     return f'<a href="tg://user?id={message.from_user.id}">{display_name}</a>'
 
 
+def _extract_spotify_track_id(text: str | None) -> str | None:
+    if not text:
+        return None
+    match = SPOTIFY_TRACK_RE.search(text)
+    if not match:
+        return None
+    return match.group(1)
+
+
 async def _resolve_play_button_count(user_id: int, track_id: str, artist: str | None, track_name: str | None) -> tuple[int, str]:
     if artist and track_name:
         lastfm_count = await lastfm_service.get_user_track_playcount(user_id, artist, track_name)
@@ -142,6 +156,42 @@ async def _send_playing(message: Message) -> None:
         await message.answer_photo(photo=cover, caption=caption, parse_mode="HTML", reply_markup=keyboard)
     else:
         await message.answer(caption, parse_mode="HTML", reply_markup=keyboard)
+
+
+async def _send_live(message: Message) -> None:
+    if not message.from_user:
+        return
+
+    track_id = _extract_spotify_track_id(message.text)
+    if not track_id:
+        await message.answer("Envie assim:\n/live https://open.spotify.com/track/...")
+        return
+
+    track = await spotify_service.get_track_by_id(track_id)
+    if not track:
+        await message.answer("Não consegui carregar essa música do Spotify.")
+        return
+
+    track_name_raw = str(track.get("track_name") or "").strip()
+    artist_raw = str(track.get("artist") or "").strip()
+    cover = track.get("album_image_url")
+    if not track_name_raw or not artist_raw:
+        await message.answer("Não consegui identificar o nome da música e o artista.")
+        return
+
+    display_name = html.escape(message.from_user.full_name or "Usuário")
+    user_link = f"tg://user?id={message.from_user.id}"
+    track_name = html.escape(track_name_raw)
+    artist = html.escape(artist_raw)
+    caption = (
+        f'<b><a href="{html.escape(user_link)}">{display_name}</a></b> mandou uma live\n'
+        f"♫ <b>{track_name}</b> — <i>{artist}</i>"
+    )
+
+    if cover:
+        await message.answer_photo(photo=str(cover), caption=caption, parse_mode="HTML")
+    else:
+        await message.answer(caption, parse_mode="HTML")
 
 
 def _register_handlers(dp: Dispatcher) -> None:
@@ -247,6 +297,10 @@ def _register_handlers(dp: Dispatcher) -> None:
     @dp.message(Command("playing"))
     async def playing(message: Message) -> None:
         await _send_playing(message)
+
+    @dp.message(Command("live"))
+    async def live(message: Message) -> None:
+        await _send_live(message)
 
     @dp.message(Command("mood"))
     async def mood(message: Message) -> None:
