@@ -132,6 +132,8 @@ async def _handle_user_question(bot: Bot, message: Message) -> bool:
         TIGRAORESPONDE_TARGET_CHAT_ID,
         f"{TIGRAORESPONDE_PREFIX} {question_text}",
     )
+    pending.origin_chat_id = message.chat.id
+    pending.origin_message_id = message.message_id
     pending.question_text = question_text
     pending.relay_message_id = relay.message_id
     pending.expires_at = _now() + timedelta(seconds=TIGRAORESPONDE_TTL_SECONDS)
@@ -140,8 +142,9 @@ async def _handle_user_question(bot: Bot, message: Message) -> bool:
 
     await message.answer("Pergunta enviada. Vou retornar a resposta aqui quando ela chegar.")
     logger.warning(
-        "TIGRAORESPONDE_RELAY_SENT | origin_chat_id=%s | user_id=%s | target_chat_id=%s | relay_message_id=%s",
+        "TIGRAORESPONDE_RELAY_SENT | origin_chat_id=%s | origin_message_id=%s | user_id=%s | target_chat_id=%s | relay_message_id=%s",
         pending.origin_chat_id,
+        pending.origin_message_id,
         pending.user_id,
         TIGRAORESPONDE_TARGET_CHAT_ID,
         relay.message_id,
@@ -167,8 +170,9 @@ async def _handle_mira_reply(bot: Bot, message: Message) -> bool:
         _pending_by_relay_message_id.pop(pending.relay_message_id, None)
 
     logger.warning(
-        "TIGRAORESPONDE_ANSWER_RETURNED | origin_chat_id=%s | user_id=%s | relay_message_id=%s | answer_message_id=%s",
+        "TIGRAORESPONDE_ANSWER_RETURNED | origin_chat_id=%s | origin_message_id=%s | user_id=%s | relay_message_id=%s | answer_message_id=%s",
         pending.origin_chat_id,
+        pending.origin_message_id,
         pending.user_id,
         pending.relay_message_id,
         message.message_id,
