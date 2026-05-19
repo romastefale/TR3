@@ -18,6 +18,13 @@ def _int_env(name: str, default: int) -> int:
         return default
 
 
+def _bool_env(name: str, default: bool) -> bool:
+    value = os.getenv(name, "").strip().lower()
+    if not value:
+        return default
+    return value in {"1", "true", "yes", "on"}
+
+
 OWNER_ID = _int_env("OWNER_ID", 8505890439)
 
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
@@ -35,6 +42,9 @@ SPOTIFY_PER_USER_RATE_LIMIT = int(os.getenv("SPOTIFY_PER_USER_RATE_LIMIT", "10")
 SPOTIFY_RATE_LIMIT_WINDOW_SECONDS = float(os.getenv("SPOTIFY_RATE_LIMIT_WINDOW_SECONDS", "5"))
 SPOTIFY_CIRCUIT_BREAKER_THRESHOLD = int(os.getenv("SPOTIFY_CIRCUIT_BREAKER_THRESHOLD", "3"))
 SPOTIFY_CIRCUIT_BREAKER_COOLDOWN_SECONDS = float(os.getenv("SPOTIFY_CIRCUIT_BREAKER_COOLDOWN_SECONDS", "8"))
+SPOTIFY_CANVAS_ENABLED = _bool_env("SPOTIFY_CANVAS_ENABLED", True)
+SPOTIFY_CANVAS_SP_DC = os.getenv("SPOTIFY_CANVAS_SP_DC", "").strip()
+SPOTIFY_CANVAS_TIMEOUT_SECONDS = float(os.getenv("SPOTIFY_CANVAS_TIMEOUT_SECONDS", "4"))
 
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY", "")
 LASTFM_API_BASE_URL = os.getenv("LASTFM_API_BASE_URL", "https://ws.audioscrobbler.com/2.0/")
