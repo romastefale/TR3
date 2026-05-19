@@ -26,6 +26,8 @@ class PendingTigraoQuestion:
     expires_at: datetime
     question_text: str | None = None
     relay_message_id: int | None = None
+    waiting_notice_chat_id: int | None = None
+    waiting_notice_message_id: int | None = None
 
 
 _pending_by_prompt: dict[tuple[int, int], PendingTigraoQuestion] = {}
@@ -72,6 +74,27 @@ def _find_pending_relay(message: Message) -> PendingTigraoQuestion | None:
     if message.chat.id != TIGRAORESPONDE_TARGET_CHAT_ID or not message.reply_to_message:
         return None
     return _pending_by_relay_message_id.get(message.reply_to_message.message_id)
+
+
+async def _delete_waiting_notice(bot: Bot, pending: PendingTigraoQuestion) -> None:
+    if pending.waiting_notice_chat_id is None or pending.waiting_notice_message_id is None:
+        return
+    try:
+        await bot.delete_message(
+            chat_id=pending.waiting_notice_chat_id,
+            message_id=pending.waiting_notice_message_id,
+        )
+        logger.warning(
+            "TIGRAORESPONDE_WAITING_NOTICE_DELETED | chat_id=%s | message_id=%s",
+            pending.waiting_notice_chat_id,
+            pending.waiting_notice_message_id,
+        )
+    except Exception:
+        logger.exception(
+            "TIGRAORESPONDE_WAITING_NOTICE_DELETE_FAILED | chat_id=%s | message_id=%s",
+            pending.waiting_notice_chat_id,
+            pending.waiting_notice_message_id,
+        )
 
 
 async def _start_tigraoresponde(message: Message) -> bool:
@@ -140,14 +163,17 @@ async def _handle_user_question(bot: Bot, message: Message) -> bool:
     _pending_by_prompt.pop((pending.prompt_chat_id, pending.prompt_message_id), None)
     _pending_by_relay_message_id[relay.message_id] = pending
 
-    await message.answer("Pergunta enviada. Vou retornar a resposta aqui quando ela chegar.")
+    waiting_notice = await message.answer("Pergunta enviada. Vou retornar a resposta aqui quando ela chegar.")
+    pending.waiting_notice_chat_id = waiting_notice.chat.id
+    pending.waiting_notice_message_id = waiting_notice.message_id
     logger.warning(
-        "TIGRAORESPONDE_RELAY_SENT | origin_chat_id=%s | origin_message_id=%s | user_id=%s | target_chat_id=%s | relay_message_id=%s",
+        "TIGRAORESPONDE_RELAY_SENT | origin_chat_id=%s | origin_message_id=%s | user_id=%s | target_chat_id=%s | relay_message_id=%s | waiting_notice_message_id=%s",
         pending.origin_chat_id,
         pending.origin_message_id,
         pending.user_id,
         TIGRAORESPONDE_TARGET_CHAT_ID,
         relay.message_id,
+        waiting_notice.message_id,
     )
     return True
 
@@ -166,6 +192,7 @@ async def _handle_mira_reply(bot: Bot, message: Message) -> bool:
         answer_text,
         reply_to_message_id=pending.origin_message_id,
     )
+    await _delete_waiting_notice(bot, pending)
     if pending.relay_message_id is not None:
         _pending_by_relay_message_id.pop(pending.relay_message_id, None)
 
