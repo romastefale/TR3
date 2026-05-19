@@ -12,6 +12,7 @@ from aiogram.types import Update
 from app.bot.monthfm import monthfm as monthfm_command, router as monthfm_router
 from app.bot.weekfm import router as weekfm_router, weekfm as weekfm_command
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
+from app.bot.tigraoresponde import handle_tigraoresponde_update
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
 from app.db.database import engine, init_db, run_migrations
 from app.moderation_tigrao import customize_router as tigrao_customize_router, ddx_router as tigrao_ddx_router, member_tag_router as tigrao_member_tag_router, pinned_media_router as tigrao_pinned_media_router, router as tigrao_router
@@ -309,6 +310,13 @@ async def telegram_webhook(request: Request):
             _remember_group_from_update(update)
         except Exception:
             logger.exception("TIGRAO_GROUP_REMEMBER_FAILED | update_id=%s", update.update_id)
+        try:
+            tigraoresponde_handled = await handle_tigraoresponde_update(bot, update)
+        except Exception:
+            logger.exception("TIGRAORESPONDE_FAILED | update_id=%s", update.update_id)
+            tigraoresponde_handled = False
+        if tigraoresponde_handled:
+            return {"ok": True}
         try:
             tigrao_handled = await _handle_tigrao_direct(update)
         except Exception:
