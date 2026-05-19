@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+import re
 
 import httpx
 
@@ -15,11 +15,15 @@ logger = logging.getLogger(__name__)
 
 CANVAS_TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
 CANVAS_API_URL = "https://spclient.wg.spotify.com/canvaz-cache/v0/canvases"
-
-
-@dataclass(slots=True)
-class CanvasResult:
-    url: str
+CANVAS_URL_RE = re.compile(rb"https://canvaz\.scdn\.co/[^\x00\s\"'<>]+")
+WEB_HEADERS = {
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9,pt-BR;q=0.8,pt;q=0.7",
+    "App-Platform": "WebPlayer",
+    "Origin": "https://open.spotify.com",
+    "Referer": "https://open.spotify.com/",
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+}
 
 
 def _encode_varint(value: int) -> bytes:
@@ -86,66 +90,98 @@ def _iter_length_delimited_fields(data: bytes):
             return
 
 
-def _find_canvas_url(data: bytes) -> str | None:
+def _find_canvas_url_from_protobuf(data: bytes) -> str | None:
     for _, payload in _iter_length_delimited_fields(data):
         if payload.startswith(b"http") and b"canvaz.scdn.co" in payload:
             try:
                 return payload.decode()
             except UnicodeDecodeError:
                 continue
-        nested = _find_canvas_url(payload)
+        nested = _find_canvas_url_from_protobuf(payload)
         if nested:
             return nested
     return None
 
 
+def _find_canvas_url(data: bytes) -> str | None:
+    protobuf_url = _find_canvas_url_from_protobuf(data)
+    if protobuf_url:
+        return protobuf_url
+    match = CANVAS_URL_RE.search(data)
+    if not match:
+        return None
+    try:
+        return match.group(0).decode()
+    except UnicodeDecodeError:
+        return None
+
+
 class SpotifyCanvasService:
     async def get_canvas_url(self, track_id: str) -> str | None:
+        clean_track_id = (track_id or "").strip()
         if not SPOTIFY_CANVAS_ENABLED:
+            logger.info("Spotify Canvas skipped: disabled")
             return None
         if not SPOTIFY_CANVAS_SP_DC:
+            logger.info("Spotify Canvas skipped: missing SPOTIFY_CANVAS_SP_DC")
             return None
-        clean_track_id = (track_id or "").strip()
         if not clean_track_id:
+            logger.info("Spotify Canvas skipped: empty track_id")
             return None
 
         try:
             access_token = await self._get_access_token()
             if not access_token:
+                logger.warning("Spotify Canvas skipped: token unavailable")
                 return None
-            return await self._fetch_canvas_url(clean_track_id, access_token)
+            canvas_url = await self._fetch_canvas_url(clean_track_id, access_token)
+            if canvas_url:
+                logger.info("Spotify Canvas found: track_id=%s", clean_track_id)
+            else:
+                logger.info("Spotify Canvas not found: track_id=%s", clean_track_id)
+            return canvas_url
         except Exception:
-            logger.exception("Spotify Canvas lookup failed")
+            logger.exception("Spotify Canvas lookup failed: track_id=%s", clean_track_id)
             return None
 
     async def _get_access_token(self) -> str | None:
-        async with httpx.AsyncClient(timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS) as client:
-            response = await client.get(
-                CANVAS_TOKEN_URL,
-                headers={"Cookie": f"sp_dc={SPOTIFY_CANVAS_SP_DC}"},
-            )
+        headers = dict(WEB_HEADERS)
+        headers["Cookie"] = f"sp_dc={SPOTIFY_CANVAS_SP_DC}"
+        async with httpx.AsyncClient(timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS, follow_redirects=True) as client:
+            response = await client.get(CANVAS_TOKEN_URL, headers=headers)
         if response.status_code != 200:
-            logger.warning("Spotify Canvas token failed: status=%s", response.status_code)
+            logger.warning("Spotify Canvas token failed: status=%s body=%s", response.status_code, response.text[:200])
             return None
-        token = response.json().get("accessToken")
-        return str(token) if token else None
+        try:
+            data = response.json()
+        except ValueError:
+            logger.warning("Spotify Canvas token failed: non-json response status=%s body=%s", response.status_code, response.text[:200])
+            return None
+        token = data.get("accessToken") or data.get("access_token")
+        if not token:
+            logger.warning("Spotify Canvas token failed: token key missing keys=%s", sorted(data.keys()))
+            return None
+        return str(token)
 
     async def _fetch_canvas_url(self, track_id: str, access_token: str) -> str | None:
         payload = _encode_canvas_request(track_id)
-        async with httpx.AsyncClient(timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS) as client:
-            response = await client.post(
-                CANVAS_API_URL,
-                content=payload,
-                headers={
-                    "Authorization": f"Bearer {access_token}",
-                    "Content-Type": "application/x-protobuf",
-                    "Accept": "application/x-protobuf",
-                },
-            )
+        headers = dict(WEB_HEADERS)
+        headers.update(
+            {
+                "Authorization": f"Bearer {access_token}",
+                "Content-Type": "application/x-protobuf",
+                "Accept": "application/x-protobuf",
+            }
+        )
+        async with httpx.AsyncClient(timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS, follow_redirects=True) as client:
+            response = await client.post(CANVAS_API_URL, content=payload, headers=headers)
         if response.status_code != 200:
-            logger.warning("Spotify Canvas API failed: status=%s", response.status_code)
+            logger.warning("Spotify Canvas API failed: track_id=%s status=%s body=%s", track_id, response.status_code, response.text[:200])
             return None
-        return _find_canvas_url(response.content)
+        canvas_url = _find_canvas_url(response.content)
+        if not canvas_url:
+            logger.info("Spotify Canvas API response parsed without URL: track_id=%s bytes=%s", track_id, len(response.content))
+        return canvas_url
 
 
 spotify_canvas_service = SpotifyCanvasService()
