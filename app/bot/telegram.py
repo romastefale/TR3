@@ -8,6 +8,7 @@ import uuid
 from aiogram import Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import (
+    BufferedInputFile,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -20,6 +21,7 @@ from app.bot.intent import detect_intent
 from app.config.settings import LASTFM_API_KEY
 from app.services.lastfm import lastfm_service
 from app.services.likes import likes_service
+from app.services.live_media import live_media_service
 from app.services.music import music_service
 from app.services.spotify import spotify_service
 from app.services.spotify_canvas import spotify_canvas_service
@@ -112,6 +114,15 @@ def _extract_spotify_track_id(text: str | None) -> str | None:
     return match.group(1)
 
 
+def _extract_spotify_url(text: str | None) -> str | None:
+    if not text:
+        return None
+    match = re.search(r"https://open\.spotify\.com/\S+", text)
+    if not match:
+        return None
+    return match.group(0)
+
+
 async def _resolve_play_button_count(user_id: int, track_id: str, artist: str | None, track_name: str | None) -> tuple[int, str]:
     if artist and track_name:
         lastfm_count = await lastfm_service.get_user_track_playcount(user_id, artist, track_name)
@@ -163,7 +174,9 @@ async def _send_live(message: Message) -> None:
     if not message.from_user:
         return
 
-    track_id = _extract_spotify_track_id(message.text)
+    text = message.text or ""
+    track_id = _extract_spotify_track_id(text)
+    spotify_url = _extract_spotify_url(text)
     if not track_id:
         await message.answer("Envie assim:\n/live https://open.spotify.com/track/...")
         return
@@ -192,6 +205,12 @@ async def _send_live(message: Message) -> None:
     canvas_url = await spotify_canvas_service.get_canvas_url(track_id)
     if canvas_url:
         await message.answer_video(video=canvas_url, caption=caption, parse_mode="HTML")
+        return
+
+    live_media = await live_media_service.resolve(spotify_url or f"https://open.spotify.com/track/{track_id}")
+    if live_media:
+        video = BufferedInputFile(live_media.content, filename=live_media.filename)
+        await message.answer_video(video=video, caption=caption, parse_mode="HTML")
     elif cover:
         await message.answer_photo(photo=str(cover), caption=caption, parse_mode="HTML")
     else:
