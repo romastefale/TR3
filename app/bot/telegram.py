@@ -198,7 +198,7 @@ async def _send_live(message: Message) -> None:
     track_name = html.escape(track_name_raw)
     artist = html.escape(artist_raw)
     caption = (
-        f'<b><a href="{html.escape(user_link)}">{display_name}</a></b> mandou uma live\n'
+        f'<b><a href="{html.escape(user_link)}">{display_name}</a></b> mandou uma música...\n'
         f"♫ <b>{track_name}</b> — <i>{artist}</i>"
     )
 
