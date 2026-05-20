@@ -3,7 +3,6 @@ from __future__ import annotations
 import html
 import io
 import logging
-import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
@@ -14,33 +13,22 @@ logger = logging.getLogger(__name__)
 
 CARD_WIDTH = 1080
 CARD_HEIGHT = 1350
-DEFAULT_BOT_NAME = "tigrãoRADIO"
+DEFAULT_BOT_NAME = "tigraoRADIO"
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "monthfm_card.html"
 
-ThemeName = Literal["light", "dark"]
+ThemeName = Literal["dark"]
 
-THEMES: dict[ThemeName, dict[str, str]] = {
+THEMES: dict[str, dict[str, str]] = {
     "dark": {
-        "bg": "#0D0B1A",
-        "surface": "#151326",
-        "surface_soft": "#1C1930",
+        "bg": "#0B0A1A",
+        "surface": "#161329",
+        "surface_soft": "#1C1A33",
         "text": "#F4F1FF",
-        "muted": "#B9B2D8",
-        "blue": "#7AB7FF",
-        "purple": "#A78BFA",
-        "line": "rgba(167,139,250,.35)",
-        "hero_bg_opacity": ".72",
-    },
-    "light": {
-        "bg": "#F5F1FF",
-        "surface": "#FFFFFF",
-        "surface_soft": "#F0EAFF",
-        "text": "#181225",
-        "muted": "#655D7C",
-        "blue": "#2563EB",
-        "purple": "#7C3AED",
-        "line": "rgba(124,58,237,.22)",
-        "hero_bg_opacity": ".54",
+        "muted": "#A8A3C6",
+        "blue": "#5B9CFF",
+        "green": "#3FE0A6",
+        "purple": "#B58CFE",
+        "line": "rgba(181,140,254,.28)",
     },
 }
 
@@ -48,16 +36,18 @@ FALLBACK_HERO_IMAGE = (
     "data:image/svg+xml;utf8,"
     "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 1024 1024'>"
     "<defs><linearGradient id='g' x1='0' x2='1' y1='0' y2='1'>"
-    "<stop offset='0%' stop-color='%237AB7FF'/><stop offset='100%' stop-color='%23A78BFA'/>"
-    "</linearGradient></defs><rect width='1024' height='1024' fill='url(%23g)'/>"
-    "<circle cx='760' cy='280' r='220' fill='rgba(255,255,255,.18)'/>"
-    "<circle cx='260' cy='740' r='260' fill='rgba(0,0,0,.16)'/>"
+    "<stop offset='0%' stop-color='%235B9CFF'/>"
+    "<stop offset='55%' stop-color='%23B58CFE'/>"
+    "<stop offset='100%' stop-color='%233FE0A6'/>"
+    "</linearGradient></defs>"
+    "<rect width='1024' height='1024' fill='url(%23g)'/>"
+    "<circle cx='760' cy='280' r='220' fill='rgba(255,255,255,.16)'/>"
+    "<circle cx='260' cy='740' r='260' fill='rgba(0,0,0,.18)'/>"
     "</svg>"
 )
 
 FONT_CANDIDATES = [
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
     "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
 ]
@@ -91,11 +81,18 @@ class MonthfmCardData:
     title: str
     bot_name: str = DEFAULT_BOT_NAME
     theme: ThemeName = "dark"
+    period_label: str = "EXTRATO"
+    period_value: str = ""
     hero_image_url: str | None = None
+    hero_track: str = ""
+    hero_artist: str = ""
+    hero_plays: int = 0
     top_artists: tuple[CardArtist, ...] = ()
     top_tracks: tuple[CardTrack, ...] = ()
-    album_name: str = "Sem disco identificado"
-    album_artist: str = "Last.fm"
+    # Legacy fields kept for backward compatibility with text builders.
+    # They are no longer rendered on the card image.
+    album_name: str = ""
+    album_artist: str = ""
     album_count: int = 0
     total_scrobbles: int = 0
     minutes: int | None = None
@@ -145,7 +142,7 @@ def _track_rows(items: tuple[CardTrack, ...]) -> str:
             f"<div class=\"rank\">{_row_number(idx)}</div>"
             "<div class=\"name\">"
             f"{_escape(item.title)}"
-            f"<span class=\"subname\">{_escape(item.artist)}</span>"
+            f"<span class=\"sub\">{_escape(item.artist)}</span>"
             "</div>"
             f"<div class=\"count\">{_format_number(item.plays)}</div>"
             "</div>"
@@ -155,27 +152,46 @@ def _track_rows(items: tuple[CardTrack, ...]) -> str:
         rows.append(
             "<div class=\"row\">"
             f"<div class=\"rank\">{_row_number(idx)}</div>"
-            "<div class=\"name\">—<span class=\"subname\">—</span></div>"
+            "<div class=\"name\">—<span class=\"sub\">—</span></div>"
             "<div class=\"count\">0</div>"
             "</div>"
         )
     return "\n".join(rows)
 
 
+def _period_font_size(value: str) -> int:
+    """Pick a Bebas Neue size that keeps the period inside the 952px column."""
+    length = len(value or "")
+    if length <= 12:
+        return 138
+    if length <= 16:
+        return 116
+    if length <= 20:
+        return 96
+    if length <= 26:
+        return 78
+    return 64
+
+
 def build_monthfm_card_html(data: MonthfmCardData) -> str:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     theme = THEMES.get(data.theme, THEMES["dark"])
+    hero_track = data.hero_track or (data.top_tracks[0].title if data.top_tracks else "—")
+    hero_artist = data.hero_artist or (data.top_tracks[0].artist if data.top_tracks else "—")
+    hero_plays = data.hero_plays or (data.top_tracks[0].plays if data.top_tracks else 0)
+    period_value = data.period_value or data.title
     values = {
         **theme,
         "bot_name": _escape(data.bot_name),
-        "title": _escape(data.title),
+        "period_label": _escape(data.period_label),
+        "period_value": _escape(period_value),
+        "period_font_size": str(_period_font_size(period_value)),
         "hero_image": _escape(data.hero_image_url or FALLBACK_HERO_IMAGE),
+        "hero_track": _escape(hero_track),
+        "hero_artist": _escape(hero_artist),
+        "hero_plays": _format_number(hero_plays),
         "artist_rows": _artist_rows(data.top_artists),
         "track_rows": _track_rows(data.top_tracks),
-        "album_name": _escape(data.album_name),
-        "album_artist": _escape(data.album_artist),
-        "album_count": _format_number(data.album_count),
-        "total_scrobbles": _format_number(data.total_scrobbles),
         "minutes": _format_number(data.minutes),
     }
     for key, value in values.items():
@@ -206,186 +222,138 @@ def _ellipsize(text: str, max_chars: int) -> str:
     return clean[: max_chars - 1].rstrip() + "…"
 
 
-def _rounded_rect(draw: ImageDraw.ImageDraw, box: tuple[int, int, int, int], radius: int, fill: tuple[int, int, int]) -> None:
-    draw.rounded_rectangle(box, radius=radius, fill=fill)
-
-
-def _vertical_gradient(width: int, height: int, top: tuple[int, int, int], bottom: tuple[int, int, int]) -> Image.Image:
-    img = Image.new("RGB", (width, height), top)
-    pixels = img.load()
-    for y in range(height):
-        ratio = y / max(1, height - 1)
-        r = int(top[0] * (1 - ratio) + bottom[0] * ratio)
-        g = int(top[1] * (1 - ratio) + bottom[1] * ratio)
-        b = int(top[2] * (1 - ratio) + bottom[2] * ratio)
-        for x in range(width):
-            pixels[x, y] = (r, g, b)
-    return img
-
-
-def _draw_list_item(
-    draw: ImageDraw.ImageDraw,
-    *,
-    x: int,
-    y: int,
-    rank: int,
-    name: str,
-    count: int,
-    rank_font: ImageFont.ImageFont,
-    name_font: ImageFont.ImageFont,
-    count_font: ImageFont.ImageFont,
-    rank_color: tuple[int, int, int],
-    text_color: tuple[int, int, int],
-    count_color: tuple[int, int, int],
-    width: int,
-) -> None:
-    draw.text((x, y), f"{rank:02d}", font=rank_font, fill=rank_color)
-    draw.text((x + 60, y - 3), _ellipsize(name, 22), font=name_font, fill=text_color)
-    count_text = _format_number(count)
-    bbox = draw.textbbox((0, 0), count_text, font=count_font)
-    draw.text((x + width - (bbox[2] - bbox[0]), y - 1), count_text, font=count_font, fill=count_color)
-
-
-def _draw_track_item(
-    draw: ImageDraw.ImageDraw,
-    *,
-    x: int,
-    y: int,
-    rank: int,
-    title: str,
-    artist: str,
-    plays: int,
-    rank_font: ImageFont.ImageFont,
-    title_font: ImageFont.ImageFont,
-    artist_font: ImageFont.ImageFont,
-    count_font: ImageFont.ImageFont,
-    rank_color: tuple[int, int, int],
-    text_color: tuple[int, int, int],
-    muted_color: tuple[int, int, int],
-    count_color: tuple[int, int, int],
-    width: int,
-) -> None:
-    draw.text((x, y), f"{rank:02d}", font=rank_font, fill=rank_color)
-    draw.text((x + 60, y - 6), _ellipsize(title, 20), font=title_font, fill=text_color)
-    draw.text((x + 60, y + 29), _ellipsize(artist, 21), font=artist_font, fill=muted_color)
-    count_text = _format_number(plays)
-    bbox = draw.textbbox((0, 0), count_text, font=count_font)
-    draw.text((x + width - (bbox[2] - bbox[0]), y + 5), count_text, font=count_font, fill=count_color)
-
-
 def _render_pillow_card(data: MonthfmCardData) -> bytes | None:
+    """Simplified fallback renderer used when Playwright/Chromium is unavailable.
+
+    Matches the dark/blue/green/purple palette of the HTML template but
+    without the display font (Bebas Neue) — uses DejaVu Bold instead.
+    """
     try:
-        theme = THEMES.get(data.theme, THEMES["dark"])
+        theme = THEMES["dark"]
         bg = _hex_to_rgb(theme["bg"])
         surface = _hex_to_rgb(theme["surface"])
         surface_soft = _hex_to_rgb(theme["surface_soft"])
         text_color = _hex_to_rgb(theme["text"])
         muted = _hex_to_rgb(theme["muted"])
         blue = _hex_to_rgb(theme["blue"])
+        green = _hex_to_rgb(theme["green"])
         purple = _hex_to_rgb(theme["purple"])
 
         image = Image.new("RGB", (CARD_WIDTH, CARD_HEIGHT), bg)
         draw = ImageDraw.Draw(image)
 
-        hero = _vertical_gradient(CARD_WIDTH, 430, blue, purple)
-        image.paste(hero, (0, 0))
-        draw.rectangle((0, 320, CARD_WIDTH, 430), fill=(20, 16, 38))
+        # Subtle radial-ish glows using elliptical fills (approximation).
+        glow = Image.new("RGB", (CARD_WIDTH, CARD_HEIGHT), bg)
+        glow_draw = ImageDraw.Draw(glow)
+        glow_draw.ellipse((-220, -260, 560, 480), fill=(blue[0] // 4 + bg[0] // 2, blue[1] // 4 + bg[1] // 2, blue[2] // 4 + bg[2] // 2))
+        glow_draw.ellipse((620, -200, 1320, 520), fill=(purple[0] // 4 + bg[0] // 2, purple[1] // 4 + bg[1] // 2, purple[2] // 4 + bg[2] // 2))
+        glow_draw.ellipse((180, 1100, 1080, 1700), fill=(green[0] // 5 + bg[0] // 2, green[1] // 5 + bg[1] // 2, green[2] // 5 + bg[2] // 2))
+        image = Image.blend(image, glow, alpha=0.55)
+        draw = ImageDraw.Draw(image)
 
-        brand_font = _load_font(34, bold=True)
-        title_font = _load_font(76, bold=True)
-        section_font = _load_font(29, bold=True)
-        rank_font = _load_font(27, bold=True)
-        item_font = _load_font(30, bold=True)
-        item_font_regular = _load_font(28)
-        italic_font = _load_font(22, italic=True)
-        count_font = _load_font(26, bold=True)
-        small_font = _load_font(23, bold=True)
-        album_font = _load_font(31, bold=True)
-        total_font = _load_font(54, bold=True)
-        total_sub_font = _load_font(28, bold=True)
+        # Fonts
+        brand_font = _load_font(32, bold=True)
+        period_label_font = _load_font(28, bold=True)
+        # Pillow lacks Bebas Neue; DejaVu Bold is wider. Scale ~70% of the HTML size.
+        period_value_font = _load_font(max(40, int(_period_font_size(data.period_value or data.title) * 0.7)), bold=True)
+        hero_label_font = _load_font(20, bold=True)
+        hero_track_font = _load_font(40, bold=True)
+        hero_artist_font = _load_font(26, italic=True)
+        hero_plays_font = _load_font(28, bold=True)
+        section_font = _load_font(24, bold=True)
+        rank_font = _load_font(36, bold=True)
+        name_font = _load_font(28, bold=True)
+        sub_font = _load_font(19, italic=True)
+        count_font = _load_font(30, bold=True)
+        minutes_font = _load_font(140, bold=True)
+        minutes_word_font = _load_font(52, bold=True)
+        minutes_hint_font = _load_font(20, bold=True)
 
-        draw.text((74, 68), f"♫ {data.bot_name}", font=brand_font, fill=(255, 255, 255))
-        wrapped_title = textwrap.wrap(data.title, width=18)[:2]
-        title_y = 148
-        for line in wrapped_title:
-            draw.text((74, title_y), line, font=title_font, fill=(255, 255, 255))
-            title_y += 82
+        x = 64
+        y = 56
 
-        # Abstract cover tile. This does not depend on remote image loading.
-        _rounded_rect(draw, (738, 88, 1006, 356), 38, (28, 24, 52))
-        _rounded_rect(draw, (762, 112, 982, 332), 32, surface_soft)
-        draw.ellipse((802, 152, 942, 292), fill=purple)
-        draw.ellipse((838, 188, 906, 256), fill=blue)
+        # Header — brand
+        draw.text((x, y), f"♫ {data.bot_name}", font=brand_font, fill=blue)
+        y += 60
 
-        draw.rectangle((0, 430, CARD_WIDTH, CARD_HEIGHT), fill=surface)
-        draw.rectangle((0, 430, CARD_WIDTH, 436), fill=purple)
+        # Period label + value
+        draw.text((x, y), data.period_label.upper(), font=period_label_font, fill=purple)
+        y += 40
+        draw.text((x, y), (data.period_value or data.title).upper(), font=period_value_font, fill=text_color)
+        y += 130
 
-        left_x = 72
-        right_x = 560
-        list_width = 448
-        top_y = 500
+        # Hero card
+        hero_top = y
+        hero_h = 236
+        draw.rounded_rectangle((x - 4, hero_top, CARD_WIDTH - x + 4, hero_top + hero_h), radius=26, fill=surface)
+        cover_box = (x + 22, hero_top + 26, x + 22 + 184, hero_top + 26 + 184)
+        draw.rounded_rectangle(cover_box, radius=18, fill=surface_soft)
+        # decorative circles on cover placeholder
+        draw.ellipse((cover_box[0] + 40, cover_box[1] + 40, cover_box[2] - 40, cover_box[3] - 40), fill=purple)
+        draw.ellipse((cover_box[0] + 70, cover_box[1] + 70, cover_box[2] - 70, cover_box[3] - 70), fill=blue)
 
-        draw.text((left_x, top_y), "✦ Top artistas", font=section_font, fill=muted)
-        y = top_y + 58
-        for idx, item in enumerate(data.top_artists[:5], 1):
-            _draw_list_item(
-                draw,
-                x=left_x,
-                y=y,
-                rank=idx,
-                name=item.name,
-                count=item.count,
-                rank_font=rank_font,
-                name_font=item_font_regular,
-                count_font=count_font,
-                rank_color=purple,
-                text_color=text_color,
-                count_color=blue,
-                width=list_width,
-            )
-            y += 58
+        info_x = cover_box[2] + 32
+        info_y = hero_top + 30
+        draw.text((info_x, info_y), "MAIS OUVIDA NO PERÍODO", font=hero_label_font, fill=muted)
+        hero_track = data.hero_track or (data.top_tracks[0].title if data.top_tracks else "—")
+        hero_artist = data.hero_artist or (data.top_tracks[0].artist if data.top_tracks else "—")
+        hero_plays = data.hero_plays or (data.top_tracks[0].plays if data.top_tracks else 0)
+        draw.text((info_x, info_y + 32), _ellipsize(hero_track, 22), font=hero_track_font, fill=text_color)
+        draw.text((info_x, info_y + 82), _ellipsize(hero_artist, 26), font=hero_artist_font, fill=green)
+        draw.text((info_x, info_y + 122), f"{_format_number(hero_plays)} plays", font=hero_plays_font, fill=blue)
 
-        draw.text((right_x, top_y), "♫ Top músicas", font=section_font, fill=muted)
-        y = top_y + 54
-        for idx, item in enumerate(data.top_tracks[:5], 1):
-            _draw_track_item(
-                draw,
-                x=right_x,
-                y=y,
-                rank=idx,
-                title=item.title,
-                artist=item.artist,
-                plays=item.plays,
-                rank_font=rank_font,
-                title_font=item_font,
-                artist_font=italic_font,
-                count_font=count_font,
-                rank_color=purple,
-                text_color=text_color,
-                muted_color=muted,
-                count_color=blue,
-                width=list_width,
-            )
-            y += 70
+        y = hero_top + hero_h + 36
 
-        line_y = 935
-        draw.line((72, line_y, 1008, line_y), fill=purple, width=2)
+        # Columns
+        left_x = x
+        right_x = x + 480
+        list_width = 416
 
-        _rounded_rect(draw, (72, 980, 622, 1218), 32, surface_soft)
-        draw.text((102, 1010), "◌ Disco mais ouvido", font=small_font, fill=muted)
-        draw.text((102, 1060), _ellipsize(data.album_name, 28), font=album_font, fill=text_color)
-        draw.text((102, 1104), f"{_ellipsize(data.album_artist, 24)} · {_format_number(data.album_count)}", font=italic_font, fill=muted)
+        draw.text((left_x, y), "✦  TOP ARTISTAS", font=section_font, fill=muted)
+        draw.text((right_x, y), "♫  TOP MÚSICAS", font=section_font, fill=muted)
 
-        _rounded_rect(draw, (668, 980, 1008, 1218), 32, surface_soft)
-        draw.text((698, 1010), "⌁ Total", font=small_font, fill=muted)
-        draw.text((698, 1062), _format_number(data.total_scrobbles), font=total_font, fill=blue)
-        draw.text((698, 1126), f"{_format_number(data.minutes)} minutos", font=total_sub_font, fill=text_color)
+        row_y = y + 50
+        for idx in range(5):
+            item = data.top_artists[idx] if idx < len(data.top_artists) else None
+            name = item.name if item else "—"
+            count = item.count if item else 0
+            draw.text((left_x, row_y), f"{idx + 1:02d}", font=rank_font, fill=purple)
+            draw.text((left_x + 60, row_y + 4), _ellipsize(name, 20), font=name_font, fill=text_color)
+            count_text = _format_number(count)
+            bbox = draw.textbbox((0, 0), count_text, font=count_font)
+            draw.text((left_x + list_width - (bbox[2] - bbox[0]), row_y + 4), count_text, font=count_font, fill=green)
+            row_y += 64
+
+        row_y = y + 50
+        for idx in range(5):
+            item = data.top_tracks[idx] if idx < len(data.top_tracks) else None
+            title = item.title if item else "—"
+            artist = item.artist if item else "—"
+            plays = item.plays if item else 0
+            draw.text((right_x, row_y), f"{idx + 1:02d}", font=rank_font, fill=purple)
+            draw.text((right_x + 60, row_y), _ellipsize(title, 18), font=name_font, fill=text_color)
+            draw.text((right_x + 60, row_y + 36), _ellipsize(artist, 22), font=sub_font, fill=muted)
+            count_text = _format_number(plays)
+            bbox = draw.textbbox((0, 0), count_text, font=count_font)
+            draw.text((right_x + list_width - (bbox[2] - bbox[0]), row_y + 8), count_text, font=count_font, fill=green)
+            row_y += 64
+
+        # Footer
+        footer_top = CARD_HEIGHT - 220
+        draw.line((x, footer_top, CARD_WIDTH - x, footer_top), fill=purple, width=2)
+        minutes_text = _format_number(data.minutes)
+        draw.text((x, footer_top + 24), minutes_text, font=minutes_font, fill=green)
+        minutes_bbox = draw.textbbox((x, footer_top + 24), minutes_text, font=minutes_font)
+        minutes_right = minutes_bbox[2]
+        word_x = max(minutes_right + 30, CARD_WIDTH - x - 240)
+        draw.text((word_x, footer_top + 60), "minutos", font=minutes_word_font, fill=text_color)
+        draw.text((word_x, footer_top + 120), "NO PERÍODO", font=minutes_hint_font, fill=muted)
 
         output = io.BytesIO()
         image.save(output, format="JPEG", quality=92, optimize=True)
         return output.getvalue()
     except Exception:
-        logger.exception("MONTHFM_CARD_PILLOW_RENDER_FAILED | title=%s", data.title)
+        logger.exception("MONTHFM_CARD_PILLOW_RENDER_FAILED | period=%s", data.period_value or data.title)
         return None
 
 
@@ -410,10 +378,18 @@ async def render_monthfm_card(data: MonthfmCardData) -> bytes | None:
                 viewport={"width": CARD_WIDTH, "height": CARD_HEIGHT},
                 device_scale_factor=1,
             )
-            await page.set_content(html_content, wait_until="domcontentloaded", timeout=12000)
-            return await page.screenshot(type="jpeg", quality=92, full_page=False, timeout=12000)
+            await page.set_content(html_content, wait_until="networkidle", timeout=20000)
+            try:
+                await page.evaluate("document.fonts && document.fonts.ready")
+            except Exception:
+                logger.debug("MONTHFM_CARD_FONTS_READY_FAILED", exc_info=True)
+            return await page.screenshot(type="jpeg", quality=92, full_page=False, timeout=15000)
     except Exception:
-        logger.exception("MONTHFM_CARD_RENDER_FAILED | theme=%s | title=%s", data.theme, data.title)
+        logger.exception(
+            "MONTHFM_CARD_RENDER_FAILED | theme=%s | period=%s",
+            data.theme,
+            data.period_value or data.title,
+        )
         return _render_pillow_card(data)
     finally:
         if browser is not None:

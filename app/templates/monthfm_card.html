@@ -4,6 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=1080, initial-scale=1" />
   <style>
+    @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700;800;900&display=swap');
+
     :root {
       --bg: {{ bg }};
       --surface: {{ surface }};
@@ -11,278 +13,284 @@
       --text: {{ text }};
       --muted: {{ muted }};
       --blue: {{ blue }};
+      --green: {{ green }};
       --purple: {{ purple }};
       --line: {{ line }};
     }
 
-    * {
-      box-sizing: border-box;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       width: 1080px;
       height: 1350px;
-      margin: 0;
       overflow: hidden;
       font-family: Inter, "SF Pro Display", "Segoe UI", Arial, sans-serif;
-      background:
-        radial-gradient(circle at 12% 8%, color-mix(in srgb, var(--blue) 28%, transparent), transparent 30%),
-        radial-gradient(circle at 88% 18%, color-mix(in srgb, var(--purple) 32%, transparent), transparent 34%),
-        var(--bg);
       color: var(--text);
+      background:
+        radial-gradient(circle at 8% 6%,  color-mix(in srgb, var(--blue) 30%, transparent), transparent 36%),
+        radial-gradient(circle at 92% 14%, color-mix(in srgb, var(--purple) 32%, transparent), transparent 40%),
+        radial-gradient(circle at 50% 104%, color-mix(in srgb, var(--green) 22%, transparent), transparent 44%),
+        var(--bg);
     }
 
     .card {
       width: 1080px;
       height: 1350px;
+      padding: 56px 64px 60px;
       display: flex;
       flex-direction: column;
-      background: var(--bg);
     }
 
-    .hero {
-      position: relative;
-      width: 100%;
-      height: 430px;
-      overflow: hidden;
-      background: linear-gradient(135deg, var(--blue), var(--purple));
+    /* HEADER ----------------------------------------------------------------- */
+    .header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 18px;
     }
-
-    .hero-bg {
-      position: absolute;
-      inset: -40px;
-      background-image: url("{{ hero_image }}");
-      background-size: cover;
-      background-position: center;
-      filter: blur(28px) saturate(1.15);
-      transform: scale(1.08);
-      opacity: {{ hero_bg_opacity }};
-    }
-
-    .hero-overlay {
-      position: absolute;
-      inset: 0;
-      background:
-        linear-gradient(180deg, rgba(0,0,0,.12), rgba(0,0,0,.62)),
-        linear-gradient(120deg, color-mix(in srgb, var(--blue) 26%, transparent), color-mix(in srgb, var(--purple) 24%, transparent));
-    }
-
-    .hero-cover {
-      position: absolute;
-      right: 74px;
-      bottom: 54px;
-      width: 268px;
-      height: 268px;
-      object-fit: cover;
-      border-radius: 38px;
-      box-shadow: 0 32px 90px rgba(0,0,0,.42);
-      background: var(--surface-soft);
-    }
-
-    .hero-copy {
-      position: absolute;
-      left: 74px;
-      right: 390px;
-      bottom: 62px;
-    }
-
     .brand {
+      font-family: Inter;
       font-size: 30px;
-      line-height: 1;
-      font-weight: 700;
+      font-weight: 800;
       letter-spacing: -.02em;
-      color: white;
-      opacity: .96;
+      color: var(--blue);
     }
+    .brand .glyph { color: var(--green); margin-right: 10px; }
 
     .period {
-      margin-top: 18px;
-      font-size: 88px;
-      line-height: .95;
-      font-weight: 850;
-      letter-spacing: -.065em;
-      color: white;
+      margin-bottom: 30px;
+    }
+    .period .label {
+      display: block;
+      font-family: Inter;
+      font-size: 26px;
+      font-weight: 700;
+      letter-spacing: .22em;
+      text-transform: uppercase;
+      color: var(--purple);
+      margin-bottom: 6px;
+    }
+    .period .value {
+      font-family: 'Bebas Neue', Inter, sans-serif;
+      font-size: {{ period_font_size }}px;
+      line-height: .92;
+      letter-spacing: .005em;
+      color: var(--text);
+      text-transform: uppercase;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 952px;
     }
 
-    .content {
-      flex: 1;
-      padding: 58px 72px 66px;
+    /* HERO ------------------------------------------------------------------- */
+    .hero {
+      display: flex;
+      align-items: center;
+      gap: 32px;
+      padding: 26px;
+      margin-bottom: 36px;
       background: var(--surface);
-      border-top: 5px solid var(--purple);
+      border: 1px solid var(--line);
+      border-radius: 26px;
+    }
+    .hero-cover {
+      width: 184px;
+      height: 184px;
+      flex-shrink: 0;
+      object-fit: cover;
+      border-radius: 18px;
+      background: var(--surface-soft);
+      box-shadow: 0 18px 44px rgba(0,0,0,.45);
+    }
+    .hero-info { min-width: 0; flex: 1; }
+    .hero-label {
+      font-size: 19px;
+      font-weight: 700;
+      color: var(--muted);
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      margin-bottom: 10px;
+    }
+    .hero-track {
+      font-size: 40px;
+      font-weight: 800;
+      line-height: 1.04;
+      letter-spacing: -.025em;
+      color: var(--text);
+      overflow: hidden;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+    }
+    .hero-artist {
+      margin-top: 8px;
+      font-size: 26px;
+      font-weight: 500;
+      font-style: italic;
+      color: var(--green);
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+    }
+    .hero-plays {
+      margin-top: 6px;
+      font-family: 'Bebas Neue', Inter;
+      font-size: 30px;
+      letter-spacing: .04em;
+      color: var(--blue);
     }
 
-    .grid {
+    /* COLUMNS ---------------------------------------------------------------- */
+    .columns {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 54px;
+      gap: 56px;
+      flex: 1;
     }
-
-    .section-title {
-      margin: 0 0 24px;
+    .col-title {
+      font-size: 22px;
+      font-weight: 800;
       color: var(--muted);
-      font-size: 26px;
-      font-weight: 750;
-      letter-spacing: -.015em;
+      letter-spacing: .16em;
+      text-transform: uppercase;
+      margin-bottom: 20px;
     }
+    .col-title .accent { color: var(--green); margin-right: 8px; }
 
     .list {
       display: flex;
       flex-direction: column;
-      gap: 17px;
+      gap: 16px;
     }
-
     .row {
       display: grid;
-      grid-template-columns: 44px minmax(0, 1fr) auto;
+      grid-template-columns: 56px minmax(0, 1fr) auto;
+      column-gap: 14px;
       align-items: baseline;
-      gap: 14px;
-      min-height: 38px;
     }
-
     .rank {
-      font-size: 25px;
-      font-weight: 750;
+      font-family: 'Bebas Neue', Inter;
+      font-size: 40px;
       color: var(--purple);
       font-variant-numeric: tabular-nums;
+      line-height: 1;
     }
-
     .name {
       min-width: 0;
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
-      font-size: 30px;
-      font-weight: 650;
-      letter-spacing: -.035em;
-      color: var(--text);
-    }
-
-    .subname {
-      display: block;
-      margin-top: 5px;
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-      font-size: 20px;
-      font-style: italic;
-      font-weight: 500;
-      letter-spacing: -.02em;
-      color: var(--muted);
-    }
-
-    .count {
-      font-size: 24px;
-      font-weight: 750;
-      color: var(--blue);
-      font-variant-numeric: tabular-nums;
-    }
-
-    .bottom {
-      display: grid;
-      grid-template-columns: 1.16fr .84fr;
-      gap: 46px;
-      margin-top: 58px;
-      padding-top: 42px;
-      border-top: 1px solid var(--line);
-    }
-
-    .album-box,
-    .total-box {
-      min-width: 0;
-      padding: 28px 30px;
-      border-radius: 32px;
-      background: var(--surface-soft);
-    }
-
-    .small-label {
-      margin: 0 0 14px;
-      font-size: 23px;
-      font-weight: 750;
-      color: var(--muted);
-    }
-
-    .album-title {
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-      font-size: 31px;
-      line-height: 1.08;
-      font-weight: 800;
-      letter-spacing: -.04em;
-      color: var(--text);
-    }
-
-    .album-artist {
-      margin-top: 12px;
-      overflow: hidden;
-      white-space: nowrap;
-      text-overflow: ellipsis;
-      font-size: 23px;
-      font-style: italic;
-      color: var(--muted);
-    }
-
-    .total-main {
-      font-size: 46px;
-      line-height: 1;
-      font-weight: 850;
-      letter-spacing: -.055em;
-      color: var(--blue);
-      font-variant-numeric: tabular-nums;
-    }
-
-    .total-sub {
-      margin-top: 13px;
-      font-size: 26px;
-      font-weight: 650;
+      font-size: 28px;
+      font-weight: 700;
       letter-spacing: -.025em;
       color: var(--text);
+      line-height: 1.06;
+    }
+    .name .sub {
+      display: block;
+      margin-top: 4px;
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      font-size: 19px;
+      font-weight: 500;
+      font-style: italic;
+      letter-spacing: -.01em;
+      color: var(--muted);
+    }
+    .count {
+      font-family: 'Bebas Neue', Inter;
+      font-size: 32px;
+      letter-spacing: .02em;
+      color: var(--green);
       font-variant-numeric: tabular-nums;
+      line-height: 1;
+    }
+
+    /* FOOTER ----------------------------------------------------------------- */
+    .footer {
+      margin-top: 30px;
+      padding-top: 26px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+    }
+    .footer .total {
+      font-family: 'Bebas Neue', Inter;
+      font-size: 142px;
+      line-height: .82;
+      color: var(--green);
+      font-variant-numeric: tabular-nums;
+      letter-spacing: .01em;
+    }
+    .footer .total-meta {
+      text-align: right;
+      padding-bottom: 6px;
+    }
+    .footer .total-meta .word {
+      font-family: 'Bebas Neue', Inter;
+      font-size: 56px;
+      line-height: .9;
+      letter-spacing: .04em;
+      color: var(--text);
+    }
+    .footer .total-meta .hint {
+      display: block;
+      margin-top: 4px;
+      font-family: Inter;
+      font-size: 20px;
+      font-weight: 600;
+      letter-spacing: .18em;
+      text-transform: uppercase;
+      color: var(--muted);
     }
   </style>
 </head>
 <body>
   <main class="card">
+    <header class="header">
+      <div class="brand"><span class="glyph">♫</span>{{ bot_name }}</div>
+    </header>
+
+    <div class="period">
+      <span class="label">{{ period_label }}</span>
+      <span class="value">{{ period_value }}</span>
+    </div>
+
     <section class="hero">
-      <div class="hero-bg"></div>
-      <div class="hero-overlay"></div>
       <img class="hero-cover" src="{{ hero_image }}" alt="" />
-      <div class="hero-copy">
-        <div class="brand">♫ {{ bot_name }}</div>
-        <div class="period">{{ title }}</div>
+      <div class="hero-info">
+        <div class="hero-label">Mais ouvida no período</div>
+        <div class="hero-track">{{ hero_track }}</div>
+        <div class="hero-artist">{{ hero_artist }}</div>
+        <div class="hero-plays">{{ hero_plays }} plays</div>
       </div>
     </section>
 
-    <section class="content">
-      <div class="grid">
-        <div>
-          <h2 class="section-title">✦ Top artistas</h2>
-          <div class="list">
-            {{ artist_rows }}
-          </div>
-        </div>
-
-        <div>
-          <h2 class="section-title">♫ Top músicas</h2>
-          <div class="list">
-            {{ track_rows }}
-          </div>
+    <section class="columns">
+      <div>
+        <h2 class="col-title"><span class="accent">✦</span>Top artistas</h2>
+        <div class="list">
+          {{ artist_rows }}
         </div>
       </div>
-
-      <div class="bottom">
-        <div class="album-box">
-          <p class="small-label">◌ Disco mais ouvido</p>
-          <div class="album-title">{{ album_name }}</div>
-          <div class="album-artist">{{ album_artist }} · {{ album_count }} scrobbles</div>
-        </div>
-        <div class="total-box">
-          <p class="small-label">⌁ Total</p>
-          <div class="total-main">{{ total_scrobbles }}</div>
-          <div class="total-sub">{{ minutes }} minutos</div>
+      <div>
+        <h2 class="col-title"><span class="accent">♫</span>Top músicas</h2>
+        <div class="list">
+          {{ track_rows }}
         </div>
       </div>
     </section>
+
+    <footer class="footer">
+      <div class="total">{{ minutes }}</div>
+      <div class="total-meta">
+        <div class="word">minutos</div>
+        <span class="hint">no período</span>
+      </div>
+    </footer>
   </main>
 </body>
 </html>

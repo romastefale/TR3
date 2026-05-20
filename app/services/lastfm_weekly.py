@@ -110,11 +110,19 @@ class LastfmWeeklyService(LastfmCapsuleService):
         album_count = top_album[0][1] if top_album else 0
         hero_key = top_tracks[0][0] if top_tracks else None
         hero_image = image_urls.get(hero_key) if hero_key else None
+        hero_artist_name = top_tracks[0][0][0] if top_tracks else ""
+        hero_track_title = top_tracks[0][0][1] if top_tracks else ""
+        hero_plays_count = top_tracks[0][1] if top_tracks else 0
 
         card_data = MonthfmCardData(
             title="Extrato da semana",
             theme="dark",
+            period_label="EXTRATO SEMANAL",
+            period_value=spec.label.upper(),
             hero_image_url=hero_image,
+            hero_track=hero_track_title,
+            hero_artist=hero_artist_name,
+            hero_plays=hero_plays_count,
             top_artists=tuple(CardArtist(name=artist, count=count) for artist, count in top_artists),
             top_tracks=tuple(CardTrack(title=track, artist=artist, plays=count) for (artist, track), count in top_tracks),
             album_name=album_name,
