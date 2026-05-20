@@ -2,13 +2,11 @@ from __future__ import annotations
 
 import html
 import logging
-import re
 import uuid
 
 from aiogram import Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import (
-    BufferedInputFile,
     CallbackQuery,
     InlineKeyboardButton,
     InlineKeyboardMarkup,
@@ -21,17 +19,12 @@ from app.bot.intent import detect_intent
 from app.config.settings import LASTFM_API_KEY
 from app.services.lastfm import lastfm_service
 from app.services.likes import likes_service
-from app.services.live_media import live_media_service
 from app.services.music import music_service
 from app.services.spotify import spotify_service
 from app.services.spotify_canvas import spotify_canvas_service
 
 logger = logging.getLogger(__name__)
 bot_dispatcher: Dispatcher = Dispatcher()
-SPOTIFY_TRACK_RE = re.compile(
-    r"(?:open\.spotify\.com/(?:intl-[a-z]{2}/)?track/|spotify:track:)([A-Za-z0-9]{22})",
-    re.IGNORECASE,
-)
 
 MOOD_PHRASES_NORMAL = {
     0: "☹︎ <i>Acho que <b>{name}</b> está no fundo de um abismo, onde até o silêncio pesa.</i>",
@@ -105,24 +98,6 @@ def _user_mention(message: Message) -> str:
     return f'<a href="tg://user?id={message.from_user.id}">{display_name}</a>'
 
 
-def _extract_spotify_track_id(text: str | None) -> str | None:
-    if not text:
-        return None
-    match = SPOTIFY_TRACK_RE.search(text)
-    if not match:
-        return None
-    return match.group(1)
-
-
-def _extract_spotify_url(text: str | None) -> str | None:
-    if not text:
-        return None
-    match = re.search(r"https://open\.spotify\.com/\S+", text)
-    if not match:
-        return None
-    return match.group(0)
-
-
 async def _resolve_play_button_count(user_id: int, track_id: str, artist: str | None, track_name: str | None) -> tuple[int, str]:
     if artist and track_name:
         lastfm_count = await lastfm_service.get_user_track_playcount(user_id, artist, track_name)
@@ -168,58 +143,6 @@ async def _send_playing(message: Message) -> None:
         await message.answer_photo(photo=cover, caption=caption, parse_mode="HTML", reply_markup=keyboard)
     else:
         await message.answer(caption, parse_mode="HTML", reply_markup=keyboard)
-
-
-async def _send_live(message: Message) -> None:
-    if not message.from_user:
-        return
-
-    text = message.text or ""
-    track_id = _extract_spotify_track_id(text)
-    spotify_url = _extract_spotify_url(text)
-    if not track_id:
-        await message.answer("Envie assim:\n/live https://open.spotify.com/track/...")
-        return
-
-    track = await spotify_service.get_track_by_id(track_id)
-    if not track:
-        await message.answer("Não consegui carregar essa música do Spotify.")
-        return
-
-    track_name_raw = str(track.get("track_name") or "").strip()
-    artist_raw = str(track.get("artist") or "").strip()
-    cover = track.get("album_image_url")
-    if not track_name_raw or not artist_raw:
-        await message.answer("Não consegui identificar o nome da música e o artista.")
-        return
-
-    display_name = html.escape(message.from_user.full_name or "Usuário")
-    user_link = f"tg://user?id={message.from_user.id}"
-
-    track_name = html.escape(track_name_raw)
-    artist = html.escape(artist_raw)
-
-    text = message.text or ""
-    spotify_url = text.split(maxsplit=1)[1] if " " in text else ""
-
-    caption = (
-    f'<b><a href="{user_link}">{display_name}</a></b> está ouvindo\n'
-    f'♫ <b><a href="{spotify_url}">{track_name}</a></b> — <i>{artist}</i>'
-    )
-
-    canvas_url = await spotify_canvas_service.get_canvas_url(track_id)
-    if canvas_url:
-        await message.answer_video(video=canvas_url, caption=caption, parse_mode="HTML")
-        return
-
-    live_media = await live_media_service.resolve(spotify_url or f"https://open.spotify.com/track/{track_id}")
-    if live_media:
-        video = BufferedInputFile(live_media.content, filename=live_media.filename)
-        await message.answer_video(video=video, caption=caption, parse_mode="HTML")
-    elif cover:
-        await message.answer_photo(photo=str(cover), caption=caption, parse_mode="HTML")
-    else:
-        await message.answer(caption, parse_mode="HTML")
 
 
 def _register_handlers(dp: Dispatcher) -> None:
@@ -325,10 +248,6 @@ def _register_handlers(dp: Dispatcher) -> None:
     @dp.message(Command("playing"))
     async def playing(message: Message) -> None:
         await _send_playing(message)
-
-    @dp.message(Command("live"))
-    async def live(message: Message) -> None:
-        await _send_live(message)
 
     @dp.message(Command("mood"))
     async def mood(message: Message) -> None:
