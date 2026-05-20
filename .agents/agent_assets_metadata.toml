@@ -6,3 +6,9 @@ id = "k8WDUsRnJP8kvTVPw-TJA"
 uri = "file://dist/tr3-month-changes.zip"
 type = "unspecified"
 title = "TR3 — branch month (arquivos + patch)"
+
+[[outputs]]
+id = "_JDpiV51PsGQ4LEFzW8Ga"
+uri = "file://dist/tr3-full.zip"
+type = "unspecified"
+title = "TR3 — codebase completa (HEAD df482f6)"
