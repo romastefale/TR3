@@ -197,8 +197,10 @@ async def _send_live(message: Message) -> None:
     user_link = f"tg://user?id={message.from_user.id}"
     track_name = html.escape(track_name_raw)
     artist = html.escape(artist_raw)
+    text = message.text or ""
+    spotify_url = text.split(maxsplit=1)[1] if " " in text else ""
     caption = (
-    f'<b><a href="{user_link}">{display_name}</a></b> mandou uma live\n'
+    f'<b><a href="{user_link}">{display_name}</a></b> está ouvindo\n'
     f'♫ <b><a href="{text}">{track_name}</a></b> — <i>{artist}</i>'
     )
 
