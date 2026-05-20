@@ -195,13 +195,16 @@ async def _send_live(message: Message) -> None:
 
     display_name = html.escape(message.from_user.full_name or "Usuário")
     user_link = f"tg://user?id={message.from_user.id}"
+
     track_name = html.escape(track_name_raw)
     artist = html.escape(artist_raw)
+
     text = message.text or ""
     spotify_url = text.split(maxsplit=1)[1] if " " in text else ""
+
     caption = (
     f'<b><a href="{user_link}">{display_name}</a></b> está ouvindo\n'
-    f'♫ <b><a href="{text}">{track_name}</a></b> — <i>{artist}</i>'
+    f'♫ <b><a href="{spotify_url}">{track_name}</a></b> — <i>{artist}</i>'
     )
 
     canvas_url = await spotify_canvas_service.get_canvas_url(track_id)
