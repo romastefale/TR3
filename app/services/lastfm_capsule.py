@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import asyncio
 import html
 import io
+import ipaddress
 import logging
+import socket
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlparse
 
 import httpx
 from PIL import Image, ImageDraw
@@ -119,7 +123,7 @@ def _track_key(artist: str, track: str) -> tuple[str, str]:
 def _best_image_url(images: Any) -> str | None:
     if not isinstance(images, list):
         return None
-    for preferred_size in ("extralarge", "large", "medium", "small"):
+    for preferred_size in ("mega", "extralarge", "large", "medium", "small"):
         for image in images:
             if isinstance(image, dict) and image.get("size") == preferred_size:
                 url = _text(image)
@@ -129,6 +133,84 @@ def _best_image_url(images: Any) -> str | None:
         url = _text(image)
         if url:
             return url
+    return None
+
+
+async def _host_resolves_public(host: str) -> bool:
+    """Return True only if every A/AAAA resolves to a routable public IP."""
+    if not host:
+        return False
+    try:
+        loop = asyncio.get_running_loop()
+        infos = await loop.getaddrinfo(host, None, type=socket.SOCK_STREAM)
+    except Exception:
+        return False
+    if not infos:
+        return False
+    for info in infos:
+        addr = info[4][0]
+        try:
+            ip = ipaddress.ip_address(addr)
+        except ValueError:
+            return False
+        if not ip.is_global:
+            return False
+    return True
+
+
+async def _fetch_image_bytes(
+    url: str,
+    *,
+    max_bytes: int = 4_000_000,
+    timeout: float = HTTP_TIMEOUT_SECONDS,
+    max_redirects: int = 3,
+) -> bytes | None:
+    """Safely download a remote image.
+
+    Enforces: https/http scheme, public-only DNS (anti-SSRF), manual redirect
+    handling with per-hop revalidation, hard byte limit during streaming,
+    strict image/* content-type. Returns None on any failure.
+    """
+    current = url
+    async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
+        for _hop in range(max_redirects + 1):
+            if not current or not current.lower().startswith(("http://", "https://")):
+                return None
+            parsed = urlparse(current)
+            host = parsed.hostname or ""
+            if not await _host_resolves_public(host):
+                logger.debug("HERO_IMAGE_FETCH_BLOCKED | host=%s", host)
+                return None
+            try:
+                async with client.stream("GET", current) as response:
+                    status = response.status_code
+                    if status in (301, 302, 303, 307, 308):
+                        location = response.headers.get("location")
+                        if not location:
+                            return None
+                        current = str(httpx.URL(current).join(location))
+                        continue
+                    if status != 200:
+                        return None
+                    content_type = (response.headers.get("content-type") or "").split(";", 1)[0].strip().lower()
+                    # Accept image/*, octet-stream, or missing header. Bytes are
+                    # validated downstream by Pillow before any use.
+                    if content_type and not (
+                        content_type.startswith("image/")
+                        or content_type == "application/octet-stream"
+                    ):
+                        return None
+                    chunks: list[bytes] = []
+                    total = 0
+                    async for chunk in response.aiter_bytes():
+                        total += len(chunk)
+                        if total > max_bytes:
+                            return None
+                        chunks.append(chunk)
+                    return b"".join(chunks) if chunks else None
+            except Exception:
+                logger.debug("HERO_IMAGE_FETCH_FAILED | url=%s", current, exc_info=True)
+                return None
     return None
 
 
@@ -276,19 +358,21 @@ class LastfmCapsuleService:
         if len(top_tracks) < MIN_COLLAGE_COVERS:
             return None
         covers: list[Image.Image] = []
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS, follow_redirects=True) as client:
+        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
             for (artist, track), _ in top_tracks[:MIN_COLLAGE_COVERS]:
                 key = _track_key(artist, track)
                 url = image_urls.get(key) or await self._track_image_url(client, artist, track)
                 if not url:
                     return None
+                payload = await _fetch_image_bytes(url)
+                if not payload:
+                    logger.debug("MONTHFM_COLLAGE_FETCH_FAILED | artist=%s | track=%s", artist, track)
+                    return None
                 try:
-                    response = await client.get(url)
-                    response.raise_for_status()
-                    with Image.open(io.BytesIO(response.content)) as raw:
+                    with Image.open(io.BytesIO(payload)) as raw:
                         covers.append(_fit_cover(raw, COVER_SIZE))
                 except Exception:
-                    logger.exception("Failed to download monthfm cover | artist=%s | track=%s", artist, track)
+                    logger.exception("Failed to decode monthfm cover | artist=%s | track=%s", artist, track)
                     return None
         if len(covers) != MIN_COLLAGE_COVERS:
             return None
@@ -353,6 +437,14 @@ class LastfmCapsuleService:
         hero_artist_name = top_tracks[0][0][0] if top_tracks else ""
         hero_track_title = top_tracks[0][0][1] if top_tracks else ""
         hero_plays_count = top_tracks[0][1] if top_tracks else 0
+        hero_image_bytes: bytes | None = None
+        if hero_key:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+                upgraded_url = await self._track_image_url(client, hero_artist_name, hero_track_title)
+            best_url = upgraded_url or hero_image
+            if best_url:
+                hero_image = best_url
+                hero_image_bytes = await _fetch_image_bytes(best_url)
 
         card_data = MonthfmCardData(
             title=f"Extrato de {spec.label}",
@@ -360,6 +452,7 @@ class LastfmCapsuleService:
             period_label="EXTRATO MENSAL",
             period_value=spec.label.upper(),
             hero_image_url=hero_image,
+            hero_image_bytes=hero_image_bytes,
             hero_track=hero_track_title,
             hero_artist=hero_artist_name,
             hero_plays=hero_plays_count,

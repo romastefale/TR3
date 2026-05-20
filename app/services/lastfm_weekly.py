@@ -4,21 +4,25 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
+import httpx
+
 from app.config.settings import LASTFM_API_KEY
 from app.services.lastfm import lastfm_service
 from app.services.lastfm_capsule import (
     CapsuleResult,
+    HTTP_TIMEOUT_SECONDS,
     LastfmCapsuleService,
     MIN_COLLAGE_COVERS,
     MONTH_NAMES_PT,
+    _best_image_url,
     _bold,
+    _fetch_image_bytes,
     _format_number,
     _italic,
     _plain,
     _shorten,
     _text,
     _track_key,
-    _best_image_url,
 )
 from app.services.monthfm_card import CardArtist, CardTrack, MonthfmCardData
 
@@ -113,6 +117,14 @@ class LastfmWeeklyService(LastfmCapsuleService):
         hero_artist_name = top_tracks[0][0][0] if top_tracks else ""
         hero_track_title = top_tracks[0][0][1] if top_tracks else ""
         hero_plays_count = top_tracks[0][1] if top_tracks else 0
+        hero_image_bytes: bytes | None = None
+        if hero_key:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+                upgraded_url = await self._track_image_url(client, hero_artist_name, hero_track_title)
+            best_url = upgraded_url or hero_image
+            if best_url:
+                hero_image = best_url
+                hero_image_bytes = await _fetch_image_bytes(best_url)
 
         card_data = MonthfmCardData(
             title="Extrato da semana",
@@ -120,6 +132,7 @@ class LastfmWeeklyService(LastfmCapsuleService):
             period_label="EXTRATO SEMANAL",
             period_value=spec.label.upper(),
             hero_image_url=hero_image,
+            hero_image_bytes=hero_image_bytes,
             hero_track=hero_track_title,
             hero_artist=hero_artist_name,
             hero_plays=hero_plays_count,

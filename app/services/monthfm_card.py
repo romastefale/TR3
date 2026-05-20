@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import html
 import io
 import logging
@@ -84,6 +85,7 @@ class MonthfmCardData:
     period_label: str = "EXTRATO"
     period_value: str = ""
     hero_image_url: str | None = None
+    hero_image_bytes: bytes | None = None
     hero_track: str = ""
     hero_artist: str = ""
     hero_plays: int = 0
@@ -159,6 +161,43 @@ def _track_rows(items: tuple[CardTrack, ...]) -> str:
     return "\n".join(rows)
 
 
+def _hero_data_uri(raw: bytes | None, *, max_dim: int = 640) -> str | None:
+    """Normalize remote image bytes into a JPEG data URI safe to embed in HTML.
+
+    Caps the largest dimension to keep the page small enough for Chromium to
+    rasterize without delay; preserves the best quality the source provides
+    up to that bound.
+    """
+    if not raw:
+        return None
+    try:
+        with Image.open(io.BytesIO(raw)) as img:
+            img = img.convert("RGB")
+            largest = max(img.size)
+            if largest > max_dim:
+                scale = max_dim / largest
+                img = img.resize((max(1, int(img.width * scale)), max(1, int(img.height * scale))), Image.LANCZOS)
+            buf = io.BytesIO()
+            img.save(buf, format="JPEG", quality=90, optimize=True)
+            return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode("ascii")
+    except Exception:
+        logger.debug("HERO_DATA_URI_FAILED", exc_info=True)
+        return None
+
+
+def _fit_square(image: Image.Image, size: int) -> Image.Image:
+    image = image.convert("RGB")
+    width, height = image.size
+    if width <= 0 or height <= 0:
+        return Image.new("RGB", (size, size), (24, 24, 24))
+    scale = max(size / width, size / height)
+    new_size = (max(size, int(width * scale)), max(size, int(height * scale)))
+    image = image.resize(new_size, Image.LANCZOS)
+    left = (image.width - size) // 2
+    top = (image.height - size) // 2
+    return image.crop((left, top, left + size, top + size))
+
+
 def _period_font_size(value: str) -> int:
     """Pick a Bebas Neue size that keeps the period inside the 952px column."""
     length = len(value or "")
@@ -180,13 +219,16 @@ def build_monthfm_card_html(data: MonthfmCardData) -> str:
     hero_artist = data.hero_artist or (data.top_tracks[0].artist if data.top_tracks else "—")
     hero_plays = data.hero_plays or (data.top_tracks[0].plays if data.top_tracks else 0)
     period_value = data.period_value or data.title
+    # SECURITY: never let Chromium fetch a remote URL directly. Only inline
+    # validated, re-encoded bytes (data URI) or the local SVG placeholder.
+    hero_image_src = _hero_data_uri(data.hero_image_bytes) or FALLBACK_HERO_IMAGE
     values = {
         **theme,
         "bot_name": _escape(data.bot_name),
         "period_label": _escape(data.period_label),
         "period_value": _escape(period_value),
         "period_font_size": str(_period_font_size(period_value)),
-        "hero_image": _escape(data.hero_image_url or FALLBACK_HERO_IMAGE),
+        "hero_image": _escape(hero_image_src),
         "hero_track": _escape(hero_track),
         "hero_artist": _escape(hero_artist),
         "hero_plays": _format_number(hero_plays),
@@ -286,11 +328,24 @@ def _render_pillow_card(data: MonthfmCardData) -> bytes | None:
         hero_top = y
         hero_h = 236
         draw.rounded_rectangle((x - 4, hero_top, CARD_WIDTH - x + 4, hero_top + hero_h), radius=26, fill=surface)
-        cover_box = (x + 22, hero_top + 26, x + 22 + 184, hero_top + 26 + 184)
-        draw.rounded_rectangle(cover_box, radius=18, fill=surface_soft)
-        # decorative circles on cover placeholder
-        draw.ellipse((cover_box[0] + 40, cover_box[1] + 40, cover_box[2] - 40, cover_box[3] - 40), fill=purple)
-        draw.ellipse((cover_box[0] + 70, cover_box[1] + 70, cover_box[2] - 70, cover_box[3] - 70), fill=blue)
+        cover_size = 184
+        cover_box = (x + 22, hero_top + 26, x + 22 + cover_size, hero_top + 26 + cover_size)
+        pasted_real_cover = False
+        if data.hero_image_bytes:
+            try:
+                with Image.open(io.BytesIO(data.hero_image_bytes)) as raw_cover:
+                    cover = _fit_square(raw_cover, cover_size)
+                mask = Image.new("L", (cover_size, cover_size), 0)
+                ImageDraw.Draw(mask).rounded_rectangle((0, 0, cover_size, cover_size), radius=18, fill=255)
+                image.paste(cover, (cover_box[0], cover_box[1]), mask)
+                draw = ImageDraw.Draw(image)
+                pasted_real_cover = True
+            except Exception:
+                logger.debug("MONTHFM_CARD_PILLOW_COVER_FAILED", exc_info=True)
+        if not pasted_real_cover:
+            draw.rounded_rectangle(cover_box, radius=18, fill=surface_soft)
+            draw.ellipse((cover_box[0] + 40, cover_box[1] + 40, cover_box[2] - 40, cover_box[3] - 40), fill=purple)
+            draw.ellipse((cover_box[0] + 70, cover_box[1] + 70, cover_box[2] - 70, cover_box[3] - 70), fill=blue)
 
         info_x = cover_box[2] + 32
         info_y = hero_top + 30
