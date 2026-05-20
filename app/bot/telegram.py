@@ -198,8 +198,8 @@ async def _send_live(message: Message) -> None:
     track_name = html.escape(track_name_raw)
     artist = html.escape(artist_raw)
     caption = (
-        f'<b><a href="{html.escape(user_link)}">{display_name}</a></b> mandou uma música...\n'
-        f"♫ <b>{track_name}</b> — <i>{artist}</i>"
+    f'<b><a href="{user_link}">{display_name}</a></b> mandou uma live\n'
+    f'♫ <b><a href="{text}">{track_name}</a></b> — <i>{artist}</i>'
     )
 
     canvas_url = await spotify_canvas_service.get_canvas_url(track_id)
