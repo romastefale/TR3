@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "k8WDUsRnJP8kvTVPw-TJA"
+uri = "file://dist/tr3-month-changes.zip"
+type = "unspecified"
+title = "TR3 — branch month (arquivos + patch)"
