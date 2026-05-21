@@ -206,18 +206,14 @@ def _row_number(index: int) -> str:
     return str(index)
 
 
-def _name_style(text: str) -> str:
-    """Inline font-size para shrink dinâmico do nome (sem reticências precoces)."""
-    return f"font-size:{_step_size(text, LIST_NAME_STEPS)}px"
-
-
 def _artist_rows(items: tuple[CardArtist, ...]) -> str:
+    """Tamanho do nome é uniforme (definido no CSS .name) — sem shrink por linha."""
     rows: list[str] = []
     for idx, item in enumerate(items[:5], 1):
         rows.append(
             "<div class=\"row\">"
             f"<div class=\"rank\">{_row_number(idx)}</div>"
-            f"<div class=\"name\" style=\"{_name_style(item.name)}\">{_escape(item.name)}</div>"
+            f"<div class=\"name\">{_escape(item.name)}</div>"
             f"<div class=\"count\">{_format_number(item.count)}</div>"
             "</div>"
         )
@@ -234,17 +230,13 @@ def _artist_rows(items: tuple[CardArtist, ...]) -> str:
 
 
 def _track_rows(items: tuple[CardTrack, ...]) -> str:
-    """Renderiza só o nome da música (sem artista, sem subtítulo).
-
-    A coluna "Top músicas" passa a usar exatamente a mesma estrutura
-    visual de "Top artistas": rank + nome + contagem.
-    """
+    """Renderiza só nome da música. Tamanho uniforme via CSS .name."""
     rows: list[str] = []
     for idx, item in enumerate(items[:5], 1):
         rows.append(
             "<div class=\"row\">"
             f"<div class=\"rank\">{_row_number(idx)}</div>"
-            f"<div class=\"name\" style=\"{_name_style(item.title)}\">{_escape(item.title)}</div>"
+            f"<div class=\"name\">{_escape(item.title)}</div>"
             f"<div class=\"count\">{_format_number(item.plays)}</div>"
             "</div>"
         )
