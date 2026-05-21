@@ -382,11 +382,15 @@ def _register_handlers(dp: Dispatcher) -> None:
         )
         await query.answer([result], cache_time=2, is_personal=True)
 
-    @dp.message(StateFilter(None), F.text)
+    # IMPORTANTE: o filtro `~F.text.startswith("/")` impede que este handler
+    # consuma comandos. Sem isso, qualquer texto começando com "/" (ex.: /sat,
+    # /weekfm, /monthfm em sub-routers) bateria neste handler primeiro, o
+    # `return` cedo devolveria None ao observer (que NÃO é UNHANDLED em
+    # aiogram3), e a propagação para sub-routers seria abortada.
+    # StateFilter(None) também evita interceptar texto durante FSM.
+    @dp.message(StateFilter(None), F.text, ~F.text.startswith("/"))
     async def text_aliases(message: Message) -> None:
         text = message.text or ""
-        if text.lstrip().startswith("/"):
-            return
         if detect_intent(text) == "play":
             await _send_playing(message)
 
