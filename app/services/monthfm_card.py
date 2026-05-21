@@ -83,11 +83,11 @@ PERIOD_VALUE_STEPS: tuple[tuple[int, int], ...] = (
 # Nome da música hero — encolhe quando longo para evitar reticências.
 # Largura útil ≈ 952px com line-clamp 2.
 HERO_TRACK_STEPS: tuple[tuple[int, int], ...] = (
-    (14, 128),
-    (22, 108),
-    (30, 92),
-    (40, 76),
-    (999, 64),
+    (14, 102),
+    (22, 86),
+    (30, 74),
+    (40, 61),
+    (999, 51),
 )
 
 # Nome do item da lista — encolhe por linha conforme o comprimento.
