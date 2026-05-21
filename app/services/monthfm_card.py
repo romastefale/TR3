@@ -234,18 +234,17 @@ def _artist_rows(items: tuple[CardArtist, ...]) -> str:
 
 
 def _track_rows(items: tuple[CardTrack, ...]) -> str:
+    """Renderiza só o nome da música (sem artista, sem subtítulo).
+
+    A coluna "Top músicas" passa a usar exatamente a mesma estrutura
+    visual de "Top artistas": rank + nome + contagem.
+    """
     rows: list[str] = []
     for idx, item in enumerate(items[:5], 1):
-        # Title encolhe; artist (sub) tem step próprio menor.
-        title_size = _step_size(item.title, LIST_NAME_STEPS)
-        artist_size = max(28, int(title_size * 0.68))
         rows.append(
             "<div class=\"row\">"
             f"<div class=\"rank\">{_row_number(idx)}</div>"
-            f"<div class=\"name\" style=\"font-size:{title_size}px\">"
-            f"{_escape(item.title)}"
-            f"<span class=\"sub\" style=\"font-size:{artist_size}px\">{_escape(item.artist)}</span>"
-            "</div>"
+            f"<div class=\"name\" style=\"{_name_style(item.title)}\">{_escape(item.title)}</div>"
             f"<div class=\"count\">{_format_number(item.plays)}</div>"
             "</div>"
         )
@@ -254,7 +253,7 @@ def _track_rows(items: tuple[CardTrack, ...]) -> str:
         rows.append(
             "<div class=\"row\">"
             f"<div class=\"rank\">{_row_number(idx)}</div>"
-            "<div class=\"name\">—<span class=\"sub\">—</span></div>"
+            "<div class=\"name\">—</div>"
             "<div class=\"count\">0</div>"
             "</div>"
         )
