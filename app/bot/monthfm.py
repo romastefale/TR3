@@ -39,13 +39,15 @@ async def _finish_monthfm(message: Message, user_id: int, display_name: str, raw
         text = result.text
         card_bytes = await render_monthfm_card(result.card_data) if result.card_data else None
         if card_bytes:
+            # Quando o card visual é gerado, dispensamos a mensagem-texto
+            # com o mesmo conteúdo (evita duplicação na thread). O texto
+            # continua disponível como fallback nos branches seguintes.
             await _safe_delete(message)
             await message.answer_photo(
                 photo=BufferedInputFile(card_bytes, filename="monthfm-card.jpg"),
                 caption=_format_caption(display_name, user_id, raw_month),
                 parse_mode="HTML",
             )
-            await message.answer(text, parse_mode="HTML")
             return
         if result.photo_bytes and len(text) <= 1024:
             await _safe_delete(message)

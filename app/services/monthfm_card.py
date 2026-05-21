@@ -65,9 +65,9 @@ CARD_FONTS: dict[str, int] = {
     "list_item_name":   FONT_SCALE["body"],           # nome do item da lista
     "list_item_sub":    FONT_SCALE["micro"],          # subnome (artista)
     "list_item_count":  FONT_SCALE["subtitle"],       # contagem do item
-    "footer_total":     FONT_SCALE["display-lg"],     # 800
-    "footer_unit":      FONT_SCALE["display-md"],     # minutos
-    "footer_hint":      FONT_SCALE["eyebrow"],        # NO PERÍODO
+    "footer_total":     160,                          # total minutos (compacto)
+    "footer_unit":      48,                           # "MINUTOS OUVINDO"
+    "footer_hint":      FONT_SCALE["eyebrow"],        # NO PERÍODO (legado)
 }
 
 # Valor dinâmico do período: encolhe quando texto é longo. Faixa alinhada

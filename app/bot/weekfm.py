@@ -37,13 +37,14 @@ async def _finish_weekfm(message: Message, user_id: int, display_name: str, raw_
         text = result.text
         card_bytes = await render_monthfm_card(result.card_data) if result.card_data else None
         if card_bytes:
+            # Card visual gerado → não enviamos a mensagem-texto duplicada.
+            # O texto segue como fallback nos branches sem card_bytes.
             await _safe_delete(message)
             await message.answer_photo(
                 photo=BufferedInputFile(card_bytes, filename="weekfm-card.jpg"),
                 caption=_caption(display_name, user_id),
                 parse_mode="HTML",
             )
-            await message.answer(text, parse_mode="HTML")
             return
         if result.photo_bytes:
             await _safe_delete(message)
