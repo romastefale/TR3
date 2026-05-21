@@ -53,7 +53,7 @@ FONT_SCALE: dict[str, int] = {
 # títulos de coluna, nome do item) ficam num passo abaixo dos heróis
 # (hero_track, display-lg total) que permanecem dominantes.
 CARD_FONTS: dict[str, int] = {
-    "brand":            FONT_SCALE["body-strong"],    # ♫ tigraoRADIO
+    "brand":            FONT_SCALE["body-strong"] // 2,  # ♫ tigraoRADIO (compacto)
     "period_label":     FONT_SCALE["subtitle"],       # EXTRATO MENSAL/SEMANAL
     "hero_label":       FONT_SCALE["micro"],          # MAIS OUVIDA NO PERÍODO (1 linha)
     "hero_track":       FONT_SCALE["display-sm"],     # nome da música hero
