@@ -15,4 +15,3 @@ externalPort = 80
 [userenv]
 
 [userenv.shared]
-GITHUB_TOKEN = "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"
