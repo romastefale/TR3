@@ -11,3 +11,8 @@ channel = "stable-25_05"
 [[ports]]
 localPort = 5000
 externalPort = 80
+
+[userenv]
+
+[userenv.shared]
+GITHUB_TOKEN = "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"
