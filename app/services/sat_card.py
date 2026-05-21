@@ -138,8 +138,12 @@ def _build_html(playlist: dict[str, Any]) -> str:
     return rendered
 
 
-async def fetch_playlist(playlist_id: str) -> dict[str, Any] | None:
-    return await spotify_service.get_playlist_top_tracks(playlist_id, limit=10)
+async def fetch_playlist(
+    playlist_id: str, user_id: int | None = None
+) -> dict[str, Any] | None:
+    return await spotify_service.get_playlist_top_tracks(
+        playlist_id, limit=10, user_id=user_id
+    )
 
 
 async def render_sat_card(playlist: dict[str, Any]) -> bytes | None:

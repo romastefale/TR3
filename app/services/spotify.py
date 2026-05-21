@@ -341,12 +341,21 @@ class SpotifyService:
         return record
 
     async def get_playlist_top_tracks(
-        self, playlist_id: str, limit: int = 10
+        self, playlist_id: str, limit: int = 10, user_id: int | None = None
     ) -> dict[str, Any] | None:
-        """Fetch a public Spotify playlist's metadata + first `limit` tracks.
+        """Fetch a Spotify playlist's metadata + first `limit` tracks.
 
-        Uses Client Credentials (app-only). Returns ``None`` for invalid
-        playlists, private playlists, or upstream failures.
+        Strategy:
+        1. If ``user_id`` is provided and has a token saved (via /login),
+           tries the user's OAuth token first. This is **required** for:
+             - Private playlists owned by the user
+             - Algorithmic playlists (Discover Weekly, Daily Mix, Release
+               Radar, On Repeat, etc.) — these return 404 to Client
+               Credentials since the Spotify API change in late 2024.
+        2. Falls back to Client Credentials for public playlists.
+
+        Returns ``None`` for invalid links, inaccessible playlists, or
+        upstream failures.
 
         Shape:
             {
@@ -367,26 +376,69 @@ class SpotifyService:
         if not pid:
             return None
 
-        token = await self._get_client_credentials_token()
-        if not token:
-            return None
-
         fields = (
             "name,owner(display_name),images,"
             "tracks.items(track(name,artists(name),album(name,images)))"
         )
-        try:
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-                resp = await client.get(
-                    f"https://api.spotify.com/v1/playlists/{pid}",
-                    params={"market": "BR", "fields": fields},
-                    headers={"Authorization": f"Bearer {token}"},
-                )
-        except Exception:
-            logger.exception("Spotify playlist fetch failed | playlist_id=%s", pid)
-            return None
+        url = f"https://api.spotify.com/v1/playlists/{pid}"
+        params = {"market": "BR", "fields": fields}
 
+        async def _do_request(bearer: str) -> httpx.Response | None:
+            try:
+                async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+                    return await client.get(
+                        url, params=params,
+                        headers={"Authorization": f"Bearer {bearer}"},
+                    )
+            except Exception:
+                logger.exception(
+                    "Spotify playlist fetch failed | playlist_id=%s", pid
+                )
+                return None
+
+        resp: httpx.Response | None = None
+
+        # 1) Tenta com token do usuário (necessário para playlists
+        #    algorítmicas e privadas).
+        if user_id is not None:
+            with SessionLocal() as db:
+                user_token = db.query(SpotifyToken).filter_by(user_id=user_id).first()
+                bearer = user_token.access_token if user_token else None
+            if bearer:
+                resp = await _do_request(bearer)
+                if resp is not None and resp.status_code == 401:
+                    refreshed = await self._refresh_token(user_id)
+                    if refreshed:
+                        resp = await _do_request(refreshed.access_token)
+                # Sucesso com user token: usa esta resposta direto.
+                if resp is not None and resp.status_code == 200:
+                    logger.info(
+                        "Spotify playlist via user_token | user_id=%s | playlist_id=%s",
+                        user_id, pid,
+                    )
+                else:
+                    # Limpa para tentar Client Credentials a seguir.
+                    resp = None
+
+        # 2) Fallback: Client Credentials (playlists públicas).
+        if resp is None:
+            cc_token = await self._get_client_credentials_token()
+            if not cc_token:
+                return None
+            resp = await _do_request(cc_token)
+            if resp is not None and resp.status_code == 200:
+                logger.info(
+                    "Spotify playlist via client_credentials | playlist_id=%s", pid
+                )
+
+        if resp is None:
+            return None
         if resp.status_code == 404:
+            logger.info(
+                "Spotify playlist 404 | playlist_id=%s | user_id=%s | "
+                "likely algorithmic/private without owner login",
+                pid, user_id,
+            )
             return None
         if resp.status_code != 200:
             logger.warning(

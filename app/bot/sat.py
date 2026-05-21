@@ -53,11 +53,15 @@ async def _generate_and_send(message: Message, playlist_id: str) -> None:
     status: Message | None = None
     try:
         status = await message.answer("Buscando a playlist…")
-        playlist = await fetch_playlist(playlist_id)
+        user_id = message.from_user.id if message.from_user else None
+        playlist = await fetch_playlist(playlist_id, user_id=user_id)
         if not playlist:
             await status.edit_text(
-                "Não consegui acessar essa playlist. Verifique se o link está "
-                "correto e se a playlist é <b>pública</b>.",
+                "Não consegui acessar essa playlist. Se ela é "
+                "<b>personalizada</b> (Discover Weekly, Daily Mix, On Repeat, "
+                "Release Radar…) ou <b>privada</b>, faça /login no Spotify "
+                "primeiro — só o dono consegue abrir esse tipo de playlist. "
+                "Se já fez login, confira se o link está correto.",
                 parse_mode="HTML",
             )
             return
