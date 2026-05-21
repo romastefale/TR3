@@ -129,7 +129,7 @@ class LastfmWeeklyService(LastfmCapsuleService):
         card_data = MonthfmCardData(
             title="Extrato da semana",
             theme="dark",
-            period_label="EXTRATO SEMANAL",
+            period_label="EXTRATO DE",
             period_value=spec.label.upper(),
             hero_image_url=hero_image,
             hero_image_bytes=hero_image_bytes,

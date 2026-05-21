@@ -254,8 +254,8 @@
       padding-top: 32px;
       border-top: 1px solid var(--line);
       display: flex;
-      align-items: flex-end;
-      justify-content: space-between;
+      flex-direction: column;
+      align-items: flex-start;
     }
     .footer .total {
       font-family: Inter;
@@ -266,28 +266,15 @@
       font-variant-numeric: lining-nums tabular-nums;
       letter-spacing: -.03em;
     }
-    .footer .total-meta {
-      text-align: right;
-      padding-bottom: 12px;
-    }
-    .footer .total-meta .word {
+    .footer .word {
+      margin-top: 14px;
       font-family: Inter;
-      font-weight: 900;
+      font-weight: 800;
       font-size: {{ font_footer_unit }}px;
-      line-height: .9;
-      letter-spacing: -.02em;
+      line-height: 1;
+      letter-spacing: .04em;
       color: var(--accent);
       text-transform: uppercase;
-    }
-    .footer .total-meta .hint {
-      display: block;
-      margin-top: 8px;
-      font-family: Inter;
-      font-size: {{ font_footer_hint }}px;
-      font-weight: 600;
-      letter-spacing: .18em;
-      text-transform: uppercase;
-      color: var(--muted);
     }
   </style>
 </head>
@@ -329,10 +316,7 @@
 
     <footer class="footer">
       <div class="total">{{ minutes }}</div>
-      <div class="total-meta">
-        <div class="word">minutos</div>
-        <span class="hint">no período</span>
-      </div>
+      <div class="word">minutos ouvindo</div>
     </footer>
   </main>
 </body>

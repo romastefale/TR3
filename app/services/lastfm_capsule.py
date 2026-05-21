@@ -449,7 +449,7 @@ class LastfmCapsuleService:
         card_data = MonthfmCardData(
             title=f"Extrato de {spec.label}",
             theme="dark",
-            period_label="EXTRATO MENSAL",
+            period_label="EXTRATO DE",
             period_value=spec.label.upper(),
             hero_image_url=hero_image,
             hero_image_bytes=hero_image_bytes,

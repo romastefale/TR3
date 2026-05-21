@@ -203,7 +203,7 @@ def _format_number(value: int | None) -> str:
 
 
 def _row_number(index: int) -> str:
-    return f"{index:02d}"
+    return str(index)
 
 
 def _name_style(text: str) -> str:
