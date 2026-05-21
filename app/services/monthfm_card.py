@@ -10,10 +10,16 @@ from typing import Literal
 
 from PIL import Image, ImageDraw, ImageFont
 
+from app.services.viga_palette import (
+    DEFAULT_ACCENT_HEX,
+    extract_accent_hex,
+    hex_to_rgba,
+)
+
 logger = logging.getLogger(__name__)
 
 CARD_WIDTH = 1080
-CARD_HEIGHT = 1900
+CARD_HEIGHT = 2000
 DEFAULT_BOT_NAME = "tigraoRADIO"
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "monthfm_card.html"
 
@@ -277,6 +283,9 @@ def build_monthfm_card_html(data: MonthfmCardData) -> str:
     # SECURITY: never let Chromium fetch a remote URL directly. Only inline
     # validated, re-encoded bytes (data URI) or the local SVG placeholder.
     hero_image_src = _hero_data_uri(data.hero_image_bytes) or FALLBACK_HERO_IMAGE
+    # Cor dominante extraída da capa do hero (viga_palette). Substitui o
+    # verde mint estático em: plays, minutos, hero_label e ícones das colunas.
+    accent_hex = extract_accent_hex(data.hero_image_bytes) if data.hero_image_bytes else DEFAULT_ACCENT_HEX
     values = {
         **theme,
         "bot_name": _escape(data.bot_name),
@@ -290,6 +299,10 @@ def build_monthfm_card_html(data: MonthfmCardData) -> str:
         "artist_rows": _artist_rows(data.top_artists),
         "track_rows": _track_rows(data.top_tracks),
         "minutes": _format_number(data.minutes),
+        # Accent dinâmico da capa.
+        "accent": accent_hex,
+        "accent_glow_top": hex_to_rgba(accent_hex, 0.18),
+        "accent_glow_mid": hex_to_rgba(accent_hex, 0.10),
         # Design tokens (font sizes) — see CARD_FONTS at top of file.
         **{f"font_{key}": str(size) for key, size in CARD_FONTS.items()},
     }

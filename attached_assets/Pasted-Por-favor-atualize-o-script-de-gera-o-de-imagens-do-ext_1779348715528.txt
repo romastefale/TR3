@@ -1,0 +1,31 @@
+Por favor, atualize o script de geração de imagens do extrato do bot para aplicar um design de nível premium (estilo Spotify Wrapped), com foco em UI/UX, utilizando Python (Pillow). 
+
+INTEGRAÇÃO COM O BOT E ARQUITETURA:
+- Vincule esta nova lógica de renderização visual aos comandos `/monthfm` e `/weekfm`.
+- É estritamente proibido alterar, sobrescrever ou quebrar os gatilhos de comandos já existentes no projeto.
+- Caso seja necessário criar novos arquivos (scripts separados) para a lógica de geração de imagem ou manipulação de cores, aplique o prefixo `viga_` na nomenclatura dos novos arquivos.
+- Quando o bot enviar a imagem finalizada no chat, certifique-se de que a interface da mensagem esteja limpa. Remova o botão "editar" da mensagem de resposta.
+
+REQUISITOS TÉCNICOS VISUAIS:
+
+1. PALETA DE CORES DINÂMICA (Baseada na Capa):
+- Implemente uma função (usando `colorthief` ou análise de pixels do Pillow) para extrair a cor dominante da capa do álbum da música "Mais ouvida no período".
+- Substitua a cor de destaque estática atual por essa cor dominante.
+- Aplique essa nova cor dominante nos seguintes elementos: números de plays nas listas, ícones, no texto "600 MINUTOS" do rodapé e no título "Mais ouvida no período".
+- Fundo: Crie um gradiente radial suave no fundo principal da imagem, onde o ponto de luz superior adote a cor dominante com baixa opacidade (cerca de 15-20%), mesclando suavemente para o fundo escuro atual.
+
+2. EFEITO GLASSMORPHISM (Card Principal):
+- No bloco "Mais ouvida no período", remova o background sólido.
+- Substitua por um retângulo de bordas arredondadas (`rounded_rectangle`) preenchido com branco ou cinza muito claro, com opacidade baixa (Alpha entre 15 e 30).
+- Se a biblioteca permitir, aplique um leve `GaussianBlur` no fundo delimitado por esse retângulo antes de aplicar a camada semi-transparente, simulando vidro fosco.
+
+3. TIPOGRAFIA E HIERARQUIA VISUAL:
+- Fonte dos Números: Verifique a fonte usada na listagem (01, 02...). O '0' está sendo renderizado com um traço superior. Substitua por uma variante de fonte limpa.
+- Contraste de Peso: Use fonte `Black` ou `ExtraBold` para números (posições do ranking e o "600 MINUTOS"). Use fonte `Regular` ou `Medium` para nomes de músicas e subtítulos.
+- Contraste de Cor: Use branco puro para os dados principais e um cinza claro para os subtítulos.
+
+4. LAYOUT, ALINHAMENTO E TRUNCAMENTO:
+- Truncamento Dinâmico: Ajuste a lógica de cálculo de bounding box (`getbbox`). Permita que o nome da música nas listas ocupe mais espaço horizontal antes de aplicar o `...`.
+- Alinhamento em Grid: Na coluna "Top Músicas", force o alinhamento da direita (`right-align`) para os números de plays, garantindo que fiquem perfeitamente alinhados verticalmente na borda direita da coluna.
+- Espaçamento (Whitespace): Aumente o gap horizontal entre a coluna "Top Artistas" e "Top Músicas" em 15%.
+- Rodapé Cortado: Aumente a altura final do canvas da imagem (height) para adicionar uma margem inferior de segurança, impedindo que o texto gigante dos minutos fique cortado na base.

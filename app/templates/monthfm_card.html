@@ -16,27 +16,31 @@
       --green: {{ green }};
       --purple: {{ purple }};
       --line: {{ line }};
+      --accent: {{ accent }};
+      --accent-glow-top: {{ accent_glow_top }};
+      --accent-glow-mid: {{ accent_glow_mid }};
     }
 
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
       width: 1080px;
-      height: 1900px;
+      height: 2000px;
       overflow: hidden;
       font-family: Inter, "SF Pro Display", "Segoe UI", Arial, sans-serif;
       color: var(--text);
       background:
-        radial-gradient(circle at 8% 6%,  color-mix(in srgb, var(--blue) 30%, transparent), transparent 36%),
-        radial-gradient(circle at 92% 14%, color-mix(in srgb, var(--purple) 32%, transparent), transparent 40%),
-        radial-gradient(circle at 50% 104%, color-mix(in srgb, var(--green) 22%, transparent), transparent 44%),
+        radial-gradient(ellipse 1100px 720px at 50% -4%, var(--accent-glow-top), transparent 70%),
+        radial-gradient(circle at 88% 18%, var(--accent-glow-mid), transparent 50%),
+        radial-gradient(circle at 50% 108%, color-mix(in srgb, var(--purple) 18%, transparent), transparent 50%),
         var(--bg);
+      font-feature-settings: "lnum" 1, "tnum" 1;
     }
 
     .card {
       width: 1080px;
-      height: 1900px;
-      padding: 56px 64px 60px;
+      height: 2000px;
+      padding: 56px 64px 80px;
       display: flex;
       flex-direction: column;
     }
@@ -55,7 +59,7 @@
       letter-spacing: -.02em;
       color: var(--blue);
     }
-    .brand .glyph { color: var(--green); margin-right: 10px; }
+    .brand .glyph { color: var(--accent); margin-right: 10px; }
 
     .period {
       margin-bottom: 30px;
@@ -83,31 +87,36 @@
       max-width: 952px;
     }
 
-    /* HERO ------------------------------------------------------------------- */
+    /* HERO — glassmorphism ---------------------------------------------------- */
     .hero {
       display: flex;
       align-items: center;
       gap: 32px;
-      padding: 26px;
+      padding: 28px;
       margin-bottom: 36px;
-      background: var(--surface);
-      border: 1px solid var(--line);
-      border-radius: 26px;
+      background: rgba(255, 255, 255, 0.07);
+      border: 1px solid rgba(255, 255, 255, 0.10);
+      border-radius: 28px;
+      backdrop-filter: blur(22px) saturate(140%);
+      -webkit-backdrop-filter: blur(22px) saturate(140%);
+      box-shadow:
+        inset 0 1px 0 rgba(255,255,255,.06),
+        0 22px 60px rgba(0,0,0,.35);
     }
     .hero-cover {
-      width: 184px;
-      height: 184px;
+      width: 196px;
+      height: 196px;
       flex-shrink: 0;
       object-fit: cover;
-      border-radius: 18px;
+      border-radius: 20px;
       background: var(--surface-soft);
-      box-shadow: 0 18px 44px rgba(0,0,0,.45);
+      box-shadow: 0 20px 48px rgba(0,0,0,.55);
     }
     .hero-info { min-width: 0; flex: 1; }
     .hero-label {
       font-size: {{ font_hero_label }}px;
       font-weight: 700;
-      color: var(--muted);
+      color: var(--accent);
       letter-spacing: .08em;
       text-transform: uppercase;
       margin-bottom: 10px;
@@ -129,29 +138,35 @@
       font-size: {{ font_hero_artist }}px;
       font-weight: 500;
       font-style: italic;
-      color: var(--green);
+      color: var(--muted);
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
     }
     .hero-plays {
       margin-top: 6px;
-      font-family: 'Bebas Neue', Inter;
+      font-family: Inter;
+      font-weight: 900;
       font-size: {{ font_hero_plays_value }}px;
-      letter-spacing: .04em;
-      color: var(--blue);
+      letter-spacing: -.01em;
+      color: var(--accent);
+      font-variant-numeric: lining-nums tabular-nums;
     }
     .hero-plays .unit {
+      font-family: Inter;
+      font-weight: 600;
       font-size: {{ font_hero_plays_unit }}px;
-      margin-left: 6px;
+      margin-left: 10px;
       color: var(--muted);
+      letter-spacing: .04em;
+      text-transform: uppercase;
     }
 
     /* COLUMNS ---------------------------------------------------------------- */
     .columns {
       display: grid;
       grid-template-columns: 1fr 1fr;
-      gap: 56px;
+      gap: 64px;
       flex: 1;
     }
     .col-title {
@@ -160,10 +175,10 @@
       color: var(--muted);
       letter-spacing: .10em;
       text-transform: uppercase;
-      margin-bottom: 20px;
+      margin-bottom: 22px;
       white-space: nowrap;
     }
-    .col-title .accent { color: var(--green); margin-right: 8px; }
+    .col-title .accent-icon { color: var(--accent); margin-right: 10px; }
 
     .list {
       display: flex;
@@ -172,16 +187,18 @@
     }
     .row {
       display: grid;
-      grid-template-columns: 88px minmax(0, 1fr) auto;
-      column-gap: 18px;
+      grid-template-columns: 80px minmax(0, 1fr) 110px;
+      column-gap: 14px;
       align-items: baseline;
     }
     .rank {
-      font-family: 'Bebas Neue', Inter;
+      font-family: Inter;
+      font-weight: 900;
       font-size: {{ font_list_rank }}px;
       color: var(--purple);
-      font-variant-numeric: tabular-nums;
+      font-variant-numeric: lining-nums tabular-nums;
       line-height: 1;
+      letter-spacing: -.02em;
     }
     .name {
       min-width: 0;
@@ -207,12 +224,14 @@
       color: var(--muted);
     }
     .count {
-      font-family: 'Bebas Neue', Inter;
+      font-family: Inter;
+      font-weight: 900;
       font-size: {{ font_list_item_count }}px;
-      letter-spacing: .02em;
-      color: var(--green);
-      font-variant-numeric: tabular-nums;
+      letter-spacing: -.01em;
+      color: var(--accent);
+      font-variant-numeric: lining-nums tabular-nums;
       line-height: 1;
+      text-align: right;
     }
 
     /* FOOTER ----------------------------------------------------------------- */
@@ -225,27 +244,30 @@
       justify-content: space-between;
     }
     .footer .total {
-      font-family: 'Bebas Neue', Inter;
+      font-family: Inter;
+      font-weight: 900;
       font-size: {{ font_footer_total }}px;
       line-height: .82;
-      color: var(--green);
-      font-variant-numeric: tabular-nums;
-      letter-spacing: .01em;
+      color: var(--accent);
+      font-variant-numeric: lining-nums tabular-nums;
+      letter-spacing: -.03em;
     }
     .footer .total-meta {
       text-align: right;
-      padding-bottom: 6px;
+      padding-bottom: 10px;
     }
     .footer .total-meta .word {
-      font-family: 'Bebas Neue', Inter;
+      font-family: Inter;
+      font-weight: 900;
       font-size: {{ font_footer_unit }}px;
       line-height: .9;
-      letter-spacing: .04em;
-      color: var(--text);
+      letter-spacing: -.02em;
+      color: var(--accent);
+      text-transform: uppercase;
     }
     .footer .total-meta .hint {
       display: block;
-      margin-top: 4px;
+      margin-top: 6px;
       font-family: Inter;
       font-size: {{ font_footer_hint }}px;
       font-weight: 600;
@@ -278,13 +300,13 @@
 
     <section class="columns">
       <div>
-        <h2 class="col-title"><span class="accent">✦</span>Top artistas</h2>
+        <h2 class="col-title"><span class="accent-icon">✦</span>Top artistas</h2>
         <div class="list">
           {{ artist_rows }}
         </div>
       </div>
       <div>
-        <h2 class="col-title"><span class="accent">♫</span>Top músicas</h2>
+        <h2 class="col-title"><span class="accent-icon">♫</span>Top músicas</h2>
         <div class="list">
           {{ track_rows }}
         </div>
