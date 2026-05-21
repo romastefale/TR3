@@ -22,11 +22,19 @@ async def _safe_delete(message: Message) -> None:
         logger.warning("monthfm status delete failed | message_id=%s", message.message_id, exc_info=True)
 
 
-def _format_caption(display_name: str, user_id: int, raw_month: str | None) -> str:
-    safe_name = html.escape(display_name or "Usuário")
-    if raw_month:
-        return f'♫ Extrato do mês de <a href="tg://user?id={user_id}">{safe_name}</a>'
-    return f'♫ Extrato mensal de <a href="tg://user?id={user_id}">{safe_name}</a>'
+def _format_caption(card_data, raw_month: str | None) -> str:
+    """Legenda enxuta: '♫ <período> de 𝐩𝐢𝐝𝐫𝐨'.
+
+    Prioriza `period_value` do card (já resolvido em PT-BR, ex: 'FEVEREIRO 2026'),
+    cai para o input do usuário e por fim para um rótulo genérico.
+    """
+    if card_data is not None and getattr(card_data, "period_value", None):
+        period = card_data.period_value.strip().lower()
+    elif raw_month:
+        period = raw_month.strip().lower()
+    else:
+        period = "este mês"
+    return f'♫ {html.escape(period)} de 𝐩𝐢𝐝𝐫𝐨'
 
 
 async def _finish_monthfm(message: Message, user_id: int, display_name: str, raw_month: str | None) -> None:
@@ -45,7 +53,7 @@ async def _finish_monthfm(message: Message, user_id: int, display_name: str, raw
             await _safe_delete(message)
             await message.answer_photo(
                 photo=BufferedInputFile(card_bytes, filename="monthfm-card.jpg"),
-                caption=_format_caption(display_name, user_id, raw_month),
+                caption=_format_caption(result.card_data, raw_month),
                 parse_mode="HTML",
             )
             return

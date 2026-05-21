@@ -22,9 +22,13 @@ async def _safe_delete(message: Message) -> None:
         logger.warning("weekfm status delete failed | message_id=%s", message.message_id, exc_info=True)
 
 
-def _caption(display_name: str, user_id: int) -> str:
-    safe_name = html.escape(display_name or "Usuário")
-    return f'♫ Extrato da semana de <a href="tg://user?id={user_id}">{safe_name}</a>'
+def _caption(card_data) -> str:
+    """Legenda enxuta: '♫ <período> de 𝐩𝐢𝐝𝐫𝐨'."""
+    if card_data is not None and getattr(card_data, "period_value", None):
+        period = card_data.period_value.strip().lower()
+    else:
+        period = "esta semana"
+    return f'♫ {html.escape(period)} de 𝐩𝐢𝐝𝐫𝐨'
 
 
 async def _finish_weekfm(message: Message, user_id: int, display_name: str, raw_week: str | None) -> None:
@@ -42,7 +46,7 @@ async def _finish_weekfm(message: Message, user_id: int, display_name: str, raw_
             await _safe_delete(message)
             await message.answer_photo(
                 photo=BufferedInputFile(card_bytes, filename="weekfm-card.jpg"),
-                caption=_caption(display_name, user_id),
+                caption=_caption(result.card_data),
                 parse_mode="HTML",
             )
             return
@@ -50,7 +54,7 @@ async def _finish_weekfm(message: Message, user_id: int, display_name: str, raw_
             await _safe_delete(message)
             await message.answer_photo(
                 photo=BufferedInputFile(result.photo_bytes, filename="weekfm.jpg"),
-                caption=_caption(display_name, user_id),
+                caption=_caption(result.card_data),
                 parse_mode="HTML",
             )
             await message.answer(text, parse_mode="HTML")
