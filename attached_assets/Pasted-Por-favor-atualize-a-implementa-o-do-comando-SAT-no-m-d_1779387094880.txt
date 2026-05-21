@@ -1,0 +1,31 @@
+Por favor, atualize a implementação do comando `/SAT` (no módulo `viga_sat.py`). Agora, o comando precisa processar um link de uma playlist do Spotify (compartilhado do app) para gerar o card das 10 músicas.
+
+Siga estritamente as diretrizes abaixo para o fluxo de interação e a extração dos dados:
+
+### 1. Fluxo de Entrada e Captura do Link (Telegram)
+O bot deve conseguir receber o link da playlist em diferentes cenários, funcionando tanto em grupos quanto em chat privado:
+- **Via Argumento:** O usuário digita `/SAT https://open.spotify.com/playlist/...`. O bot deve extrair o link diretamente da própria mensagem.
+- **Via Reply (Resposta):** O usuário responde a uma mensagem que contém um link do Spotify enviando apenas `/SAT`. O bot deve buscar o link no texto da mensagem que foi respondida.
+- **Via Fluxo Interativo (Privado/Grupos):** Se o usuário digitar apenas `/SAT` (sem link e sem reply), o bot deve pedir: *"Envie o link da playlist copiado do Spotify para gerar o seu card."* e aguardar o envio do link na próxima mensagem (utilizando o handler de conversação adequado da biblioteca).
+
+### 2. Tratamento do Link e Coleta de Dados (Spotipy)
+- Crie uma lógica (usando regex ou split) para extrair o `playlist_id` da URL recebida.
+- Utilize o endpoint `playlist_tracks(playlist_id, limit=10)` da biblioteca `spotipy` para buscar as músicas.
+- Extraia o nome da faixa e o nome do artista (ou artistas) apenas para as 10 primeiras posições da playlist.
+- Trate exceções para avisar o usuário caso a playlist seja privada ou o link seja inválido.
+
+### 3. Design e Layout do Card (Pillow / PIL)
+Mantenha as regras visuais já estabelecidas:
+- Gere uma imagem quadrada com fundo escuro.
+- **Quadrado Especial (#1):** Destaque a capa do álbum da primeira música da playlist em um quadrado maior no topo ou na lateral esquerda.
+- **Lista do Ranking (1 a 10):** Liste as faixas estritamente no formato `"Música - Artista"`. 
+- **Restrição Importante:** Não adicione a duração em minutos e não coloque número de reproduções no texto da imagem.
+
+### 4. Retorno e Interface
+- O bot deve gerar a imagem em buffer/bytes (`BytesIO`) e enviá-la via `send_photo`.
+- **Interface Limpa:** Remova o botão de editar. Não inclua nenhum inline keyboard (botões embaixo da mensagem) no envio da foto.
+- Use a seguinte legenda formatada em Markdown:
+
+📊 *Seu Ranking Vitalício (All-Time Top Songs)*
+👤 *Usuário:* [Nome do Usuário]
+🎵 *Top 10 faixas da playlist extraída.*
