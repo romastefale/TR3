@@ -340,6 +340,94 @@ class SpotifyService:
                 self._track_search_cache.pop(k, None)
         return record
 
+    async def get_playlist_top_tracks(
+        self, playlist_id: str, limit: int = 10
+    ) -> dict[str, Any] | None:
+        """Fetch a public Spotify playlist's metadata + first `limit` tracks.
+
+        Uses Client Credentials (app-only). Returns ``None`` for invalid
+        playlists, private playlists, or upstream failures.
+
+        Shape:
+            {
+                "name": str,
+                "owner": str | None,
+                "image": str | None,   # playlist cover (640px)
+                "tracks": [
+                    {
+                        "title": str,
+                        "artist": str,          # joined artists
+                        "cover": str | None,    # album cover (640px)
+                    },
+                    ...
+                ],
+            }
+        """
+        pid = (playlist_id or "").strip()
+        if not pid:
+            return None
+
+        token = await self._get_client_credentials_token()
+        if not token:
+            return None
+
+        fields = (
+            "name,owner(display_name),images,"
+            "tracks.items(track(name,artists(name),album(name,images)))"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+                resp = await client.get(
+                    f"https://api.spotify.com/v1/playlists/{pid}",
+                    params={"market": "BR", "fields": fields},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+        except Exception:
+            logger.exception("Spotify playlist fetch failed | playlist_id=%s", pid)
+            return None
+
+        if resp.status_code == 404:
+            return None
+        if resp.status_code != 200:
+            logger.warning(
+                "Spotify playlist non-200 | status=%s | playlist_id=%s | body=%s",
+                resp.status_code, pid, resp.text[:200],
+            )
+            return None
+
+        body = resp.json() or {}
+        images = body.get("images") or []
+        owner = (body.get("owner") or {}).get("display_name")
+        items = ((body.get("tracks") or {}).get("items") or [])
+
+        tracks: list[dict[str, str | None]] = []
+        for item in items:
+            if len(tracks) >= limit:
+                break
+            track = (item or {}).get("track") or {}
+            name = (track.get("name") or "").strip()
+            if not name:
+                continue  # episódios / faixas locais sem nome
+            artists = track.get("artists") or []
+            artist_names = [a.get("name") for a in artists if a.get("name")]
+            album = track.get("album") or {}
+            album_images = album.get("images") or []
+            tracks.append({
+                "title": name,
+                "artist": ", ".join(artist_names) or "—",
+                "cover": album_images[0].get("url") if album_images else None,
+            })
+
+        if not tracks:
+            return None
+
+        return {
+            "name": (body.get("name") or "").strip() or "Playlist",
+            "owner": owner,
+            "image": images[0].get("url") if images else None,
+            "tracks": tracks,
+        }
+
     async def clear_user_session(self, user_id: int) -> bool:
         with SessionLocal() as db:
             token = db.query(SpotifyToken).filter_by(user_id=user_id).first()

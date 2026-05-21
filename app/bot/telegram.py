@@ -5,7 +5,7 @@ import logging
 import uuid
 
 from aiogram import Dispatcher, F
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.types import (
     CallbackQuery,
     InlineKeyboardButton,
@@ -382,7 +382,7 @@ def _register_handlers(dp: Dispatcher) -> None:
         )
         await query.answer([result], cache_time=2, is_personal=True)
 
-    @dp.message(F.text)
+    @dp.message(StateFilter(None), F.text)
     async def text_aliases(message: Message) -> None:
         text = message.text or ""
         if text.lstrip().startswith("/"):
