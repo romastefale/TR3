@@ -50,7 +50,7 @@
     }
     .brand {
       font-family: Inter;
-      font-size: 30px;
+      font-size: {{ font_brand }}px;
       font-weight: 800;
       letter-spacing: -.02em;
       color: var(--blue);
@@ -63,7 +63,7 @@
     .period .label {
       display: block;
       font-family: Inter;
-      font-size: 26px;
+      font-size: {{ font_period_label }}px;
       font-weight: 700;
       letter-spacing: .22em;
       text-transform: uppercase;
@@ -105,7 +105,7 @@
     }
     .hero-info { min-width: 0; flex: 1; }
     .hero-label {
-      font-size: 19px;
+      font-size: {{ font_hero_label }}px;
       font-weight: 700;
       color: var(--muted);
       letter-spacing: .14em;
@@ -113,7 +113,7 @@
       margin-bottom: 10px;
     }
     .hero-track {
-      font-size: 40px;
+      font-size: {{ font_hero_track }}px;
       font-weight: 800;
       line-height: 1.04;
       letter-spacing: -.025em;
@@ -125,7 +125,7 @@
     }
     .hero-artist {
       margin-top: 8px;
-      font-size: 26px;
+      font-size: {{ font_hero_artist }}px;
       font-weight: 500;
       font-style: italic;
       color: var(--green);
@@ -136,9 +136,14 @@
     .hero-plays {
       margin-top: 6px;
       font-family: 'Bebas Neue', Inter;
-      font-size: 30px;
+      font-size: {{ font_hero_plays_value }}px;
       letter-spacing: .04em;
       color: var(--blue);
+    }
+    .hero-plays .unit {
+      font-size: {{ font_hero_plays_unit }}px;
+      margin-left: 6px;
+      color: var(--muted);
     }
 
     /* COLUMNS ---------------------------------------------------------------- */
@@ -149,7 +154,7 @@
       flex: 1;
     }
     .col-title {
-      font-size: 22px;
+      font-size: {{ font_col_title }}px;
       font-weight: 800;
       color: var(--muted);
       letter-spacing: .16em;
@@ -171,7 +176,7 @@
     }
     .rank {
       font-family: 'Bebas Neue', Inter;
-      font-size: 40px;
+      font-size: {{ font_list_rank }}px;
       color: var(--purple);
       font-variant-numeric: tabular-nums;
       line-height: 1;
@@ -181,7 +186,7 @@
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
-      font-size: 28px;
+      font-size: {{ font_list_item_name }}px;
       font-weight: 700;
       letter-spacing: -.025em;
       color: var(--text);
@@ -193,7 +198,7 @@
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
-      font-size: 19px;
+      font-size: {{ font_list_item_sub }}px;
       font-weight: 500;
       font-style: italic;
       letter-spacing: -.01em;
@@ -201,7 +206,7 @@
     }
     .count {
       font-family: 'Bebas Neue', Inter;
-      font-size: 32px;
+      font-size: {{ font_list_item_count }}px;
       letter-spacing: .02em;
       color: var(--green);
       font-variant-numeric: tabular-nums;
@@ -219,7 +224,7 @@
     }
     .footer .total {
       font-family: 'Bebas Neue', Inter;
-      font-size: 142px;
+      font-size: {{ font_footer_total }}px;
       line-height: .82;
       color: var(--green);
       font-variant-numeric: tabular-nums;
@@ -231,7 +236,7 @@
     }
     .footer .total-meta .word {
       font-family: 'Bebas Neue', Inter;
-      font-size: 56px;
+      font-size: {{ font_footer_unit }}px;
       line-height: .9;
       letter-spacing: .04em;
       color: var(--text);
@@ -240,7 +245,7 @@
       display: block;
       margin-top: 4px;
       font-family: Inter;
-      font-size: 20px;
+      font-size: {{ font_footer_hint }}px;
       font-weight: 600;
       letter-spacing: .18em;
       text-transform: uppercase;
@@ -265,7 +270,7 @@
         <div class="hero-label">Mais ouvida no período</div>
         <div class="hero-track">{{ hero_track }}</div>
         <div class="hero-artist">{{ hero_artist }}</div>
-        <div class="hero-plays">{{ hero_plays }} plays</div>
+        <div class="hero-plays">{{ hero_plays }}<span class="unit">plays</span></div>
       </div>
     </section>
 

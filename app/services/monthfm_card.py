@@ -17,6 +17,58 @@ CARD_HEIGHT = 1350
 DEFAULT_BOT_NAME = "tigraoRADIO"
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "monthfm_card.html"
 
+# =========================================================================
+# DESIGN TOKENS — fontes do card /monthfm e /weekfm
+# -------------------------------------------------------------------------
+# Edite estes valores para ajustar tamanhos.
+#
+# FONT_SCALE: escala tipográfica (Major Third ~1.25). Mude aqui para
+#   reescalonar TUDO proporcionalmente.
+# CARD_FONTS: mapeia cada elemento visual ao passo da escala. Mude aqui
+#   para ajustar um elemento específico (ex: trocar de "subtitle" pra
+#   "body-strong").
+#
+# Os valores são consumidos tanto pelo template HTML (Playwright/Chromium)
+# quanto pelo fallback Pillow — fonte única da verdade.
+# =========================================================================
+FONT_SCALE: dict[str, int] = {
+    "eyebrow":     24,   # micro-labels, texto mudo
+    "body":        28,   # texto secundário
+    "subtitle":    34,   # subtítulo, artista do hero
+    "body-strong": 40,   # corpo destacado, números médios
+    "display-sm":  52,   # títulos de seção, hero track, ranks
+    "display-md":  70,   # unidade gigante ("minutos")
+    "display-lg": 160,   # display principal (total minutos)
+}
+
+CARD_FONTS: dict[str, int] = {
+    "brand":            FONT_SCALE["body-strong"],    # ♫ tigraoRADIO
+    "period_label":     FONT_SCALE["subtitle"],       # EXTRATO MENSAL/SEMANAL
+    "hero_label":       FONT_SCALE["eyebrow"],        # MAIS OUVIDA NO PERÍODO
+    "hero_track":       FONT_SCALE["display-sm"],     # nome da música hero
+    "hero_artist":      FONT_SCALE["subtitle"],       # artista do hero
+    "hero_plays_value": FONT_SCALE["body-strong"],    # número de plays do hero
+    "hero_plays_unit":  FONT_SCALE["body"],           # palavra "plays"
+    "col_title":        FONT_SCALE["body"],           # TOP ARTISTAS / TOP MÚSICAS
+    "list_rank":        FONT_SCALE["display-sm"],     # 01..05
+    "list_item_name":   FONT_SCALE["subtitle"],       # nome do item da lista
+    "list_item_sub":    FONT_SCALE["eyebrow"],        # subnome (artista)
+    "list_item_count":  FONT_SCALE["body-strong"],    # contagem do item
+    "footer_total":     FONT_SCALE["display-lg"],     # 800
+    "footer_unit":      FONT_SCALE["display-md"],     # minutos
+    "footer_hint":      FONT_SCALE["eyebrow"],        # NO PERÍODO
+}
+
+# Valor dinâmico do período: encolhe quando texto é longo. Faixa alinhada
+# à escala (display-lg ↔ display-sm).
+PERIOD_VALUE_STEPS: tuple[tuple[int, int], ...] = (
+    (12, 160),   # <= 12 chars → display-lg
+    (16, 134),
+    (20, 112),
+    (26, 92),
+    (999, 76),
+)
+
 ThemeName = Literal["dark"]
 
 THEMES: dict[str, dict[str, str]] = {
@@ -199,17 +251,15 @@ def _fit_square(image: Image.Image, size: int) -> Image.Image:
 
 
 def _period_font_size(value: str) -> int:
-    """Pick a Bebas Neue size that keeps the period inside the 952px column."""
+    """Pick a Bebas Neue size that keeps the period inside the 952px column.
+
+    Steps are configured in PERIOD_VALUE_STEPS (design tokens, top of file).
+    """
     length = len(value or "")
-    if length <= 12:
-        return 138
-    if length <= 16:
-        return 116
-    if length <= 20:
-        return 96
-    if length <= 26:
-        return 78
-    return 64
+    for max_chars, size in PERIOD_VALUE_STEPS:
+        if length <= max_chars:
+            return size
+    return PERIOD_VALUE_STEPS[-1][1]
 
 
 def build_monthfm_card_html(data: MonthfmCardData) -> str:
@@ -235,6 +285,8 @@ def build_monthfm_card_html(data: MonthfmCardData) -> str:
         "artist_rows": _artist_rows(data.top_artists),
         "track_rows": _track_rows(data.top_tracks),
         "minutes": _format_number(data.minutes),
+        # Design tokens (font sizes) — see CARD_FONTS at top of file.
+        **{f"font_{key}": str(size) for key, size in CARD_FONTS.items()},
     }
     for key, value in values.items():
         template = template.replace("{{ " + key + " }}", str(value))
@@ -293,23 +345,30 @@ def _render_pillow_card(data: MonthfmCardData) -> bytes | None:
         image = Image.blend(image, glow, alpha=0.55)
         draw = ImageDraw.Draw(image)
 
-        # Fonts
-        brand_font = _load_font(32, bold=True)
-        period_label_font = _load_font(28, bold=True)
-        # Pillow lacks Bebas Neue; DejaVu Bold is wider. Scale ~70% of the HTML size.
-        period_value_font = _load_font(max(40, int(_period_font_size(data.period_value or data.title) * 0.7)), bold=True)
-        hero_label_font = _load_font(20, bold=True)
-        hero_track_font = _load_font(40, bold=True)
-        hero_artist_font = _load_font(26, italic=True)
-        hero_plays_font = _load_font(28, bold=True)
-        section_font = _load_font(24, bold=True)
-        rank_font = _load_font(36, bold=True)
-        name_font = _load_font(28, bold=True)
-        sub_font = _load_font(19, italic=True)
-        count_font = _load_font(30, bold=True)
-        minutes_font = _load_font(140, bold=True)
-        minutes_word_font = _load_font(52, bold=True)
-        minutes_hint_font = _load_font(20, bold=True)
+        # Fonts — DejaVu Bold é mais largo que Bebas Neue, então aplicamos
+        # ~80% nos tamanhos de display pra não estourar o layout do fallback.
+        def _disp(token: str) -> int:
+            return max(20, int(CARD_FONTS[token] * 0.8))
+
+        brand_font = _load_font(CARD_FONTS["brand"], bold=True)
+        period_label_font = _load_font(CARD_FONTS["period_label"], bold=True)
+        period_value_font = _load_font(
+            max(40, int(_period_font_size(data.period_value or data.title) * 0.7)),
+            bold=True,
+        )
+        hero_label_font = _load_font(CARD_FONTS["hero_label"], bold=True)
+        hero_track_font = _load_font(_disp("hero_track"), bold=True)
+        hero_artist_font = _load_font(CARD_FONTS["hero_artist"], italic=True)
+        hero_plays_font = _load_font(CARD_FONTS["hero_plays_value"], bold=True)
+        hero_plays_unit_font = _load_font(CARD_FONTS["hero_plays_unit"], bold=True)
+        section_font = _load_font(CARD_FONTS["col_title"], bold=True)
+        rank_font = _load_font(_disp("list_rank"), bold=True)
+        name_font = _load_font(CARD_FONTS["list_item_name"], bold=True)
+        sub_font = _load_font(CARD_FONTS["list_item_sub"], italic=True)
+        count_font = _load_font(CARD_FONTS["list_item_count"], bold=True)
+        minutes_font = _load_font(_disp("footer_total"), bold=True)
+        minutes_word_font = _load_font(_disp("footer_unit"), bold=True)
+        minutes_hint_font = _load_font(CARD_FONTS["footer_hint"], bold=True)
 
         x = 64
         y = 56
@@ -355,7 +414,10 @@ def _render_pillow_card(data: MonthfmCardData) -> bytes | None:
         hero_plays = data.hero_plays or (data.top_tracks[0].plays if data.top_tracks else 0)
         draw.text((info_x, info_y + 32), _ellipsize(hero_track, 22), font=hero_track_font, fill=text_color)
         draw.text((info_x, info_y + 82), _ellipsize(hero_artist, 26), font=hero_artist_font, fill=green)
-        draw.text((info_x, info_y + 122), f"{_format_number(hero_plays)} plays", font=hero_plays_font, fill=blue)
+        plays_text = _format_number(hero_plays)
+        draw.text((info_x, info_y + 122), plays_text, font=hero_plays_font, fill=blue)
+        plays_bbox = draw.textbbox((info_x, info_y + 122), plays_text, font=hero_plays_font)
+        draw.text((plays_bbox[2] + 8, info_y + 132), "plays", font=hero_plays_unit_font, fill=muted)
 
         y = hero_top + hero_h + 36
 
