@@ -80,6 +80,35 @@ PERIOD_VALUE_STEPS: tuple[tuple[int, int], ...] = (
     (999, 76),
 )
 
+# Nome da música hero — encolhe quando longo para evitar reticências.
+# Largura útil ≈ 952px com line-clamp 2.
+HERO_TRACK_STEPS: tuple[tuple[int, int], ...] = (
+    (14, 128),
+    (22, 108),
+    (30, 92),
+    (40, 76),
+    (999, 64),
+)
+
+# Nome do item da lista — encolhe por linha conforme o comprimento.
+# Largura útil ≈ 290px (col 472 − rank 56 − gap 14 − count 110 − gap 14).
+LIST_NAME_STEPS: tuple[tuple[int, int], ...] = (
+    (8, 52),
+    (12, 44),
+    (16, 38),
+    (22, 32),
+    (999, 28),
+)
+
+
+def _step_size(value: str, steps: tuple[tuple[int, int], ...]) -> int:
+    """Devolve o primeiro size cujo limite de chars cobre o texto."""
+    length = len(value or "")
+    for max_chars, size in steps:
+        if length <= max_chars:
+            return size
+    return steps[-1][1]
+
 ThemeName = Literal["dark"]
 
 THEMES: dict[str, dict[str, str]] = {
@@ -177,13 +206,18 @@ def _row_number(index: int) -> str:
     return f"{index:02d}"
 
 
+def _name_style(text: str) -> str:
+    """Inline font-size para shrink dinâmico do nome (sem reticências precoces)."""
+    return f"font-size:{_step_size(text, LIST_NAME_STEPS)}px"
+
+
 def _artist_rows(items: tuple[CardArtist, ...]) -> str:
     rows: list[str] = []
     for idx, item in enumerate(items[:5], 1):
         rows.append(
             "<div class=\"row\">"
             f"<div class=\"rank\">{_row_number(idx)}</div>"
-            f"<div class=\"name\">{_escape(item.name)}</div>"
+            f"<div class=\"name\" style=\"{_name_style(item.name)}\">{_escape(item.name)}</div>"
             f"<div class=\"count\">{_format_number(item.count)}</div>"
             "</div>"
         )
@@ -202,12 +236,15 @@ def _artist_rows(items: tuple[CardArtist, ...]) -> str:
 def _track_rows(items: tuple[CardTrack, ...]) -> str:
     rows: list[str] = []
     for idx, item in enumerate(items[:5], 1):
+        # Title encolhe; artist (sub) tem step próprio menor.
+        title_size = _step_size(item.title, LIST_NAME_STEPS)
+        artist_size = max(28, int(title_size * 0.68))
         rows.append(
             "<div class=\"row\">"
             f"<div class=\"rank\">{_row_number(idx)}</div>"
-            "<div class=\"name\">"
+            f"<div class=\"name\" style=\"font-size:{title_size}px\">"
             f"{_escape(item.title)}"
-            f"<span class=\"sub\">{_escape(item.artist)}</span>"
+            f"<span class=\"sub\" style=\"font-size:{artist_size}px\">{_escape(item.artist)}</span>"
             "</div>"
             f"<div class=\"count\">{_format_number(item.plays)}</div>"
             "</div>"
@@ -262,15 +299,8 @@ def _fit_square(image: Image.Image, size: int) -> Image.Image:
 
 
 def _period_font_size(value: str) -> int:
-    """Pick a Bebas Neue size that keeps the period inside the 952px column.
-
-    Steps are configured in PERIOD_VALUE_STEPS (design tokens, top of file).
-    """
-    length = len(value or "")
-    for max_chars, size in PERIOD_VALUE_STEPS:
-        if length <= max_chars:
-            return size
-    return PERIOD_VALUE_STEPS[-1][1]
+    """Pick a Bebas Neue size that keeps the period inside the 952px column."""
+    return _step_size(value, PERIOD_VALUE_STEPS)
 
 
 def build_monthfm_card_html(data: MonthfmCardData) -> str:
@@ -294,6 +324,7 @@ def build_monthfm_card_html(data: MonthfmCardData) -> str:
         "period_font_size": str(_period_font_size(period_value)),
         "hero_image": _escape(hero_image_src),
         "hero_track": _escape(hero_track),
+        "hero_track_font_size": str(_step_size(hero_track, HERO_TRACK_STEPS)),
         "hero_artist": _escape(hero_artist),
         "hero_plays": _format_number(hero_plays),
         "artist_rows": _artist_rows(data.top_artists),

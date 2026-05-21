@@ -1,0 +1,113 @@
+Texto pronto para copiar no Agent/Replit:
+
+Quero refinar o layout do extrato mensal mantendo a identidade visual atual (dark + roxo/rosa), porém corrigindo problemas de hierarquia, alinhamento e legibilidade.
+
+1. Lista “Top Artistas” e “Top Músicas” — alinhamento rígido por colunas
+
+Atualmente os rankings parecem deslocados porque os números do ranking (01, 02, 03…) não seguem uma grade fixa.
+
+Quero transformar as duas listas em uma estrutura de colunas com largura fixa.
+
+Estrutura desejada para cada linha:
+
+[ranking] [nome] [valor]
+
+Exemplo visual:
+
+01   Zara Larsson          184
+02   Rihanna               140
+03   Lady Gaga             112
+04   Priscilla             101
+05   Muse                   83
+
+e:
+
+01   El Condor Pasa         27
+02   El Condor Pasa         21
+03   Midnight Sun           12
+04   Eurosong               11
+05   Pretty Girls           11
+
+Regras importantes:
+
+* O “01”, “02”, “03”, “04”, “05” deve ocupar uma coluna fixa.
+* O alinhamento vertical precisa ser perfeito:
+    * 01 alinhado exatamente com 01
+    * 02 alinhado exatamente com 02
+    * 03 alinhado exatamente com 03
+    * mesma distância entre todas as linhas
+* Os números não podem “empurrar” nomes.
+* Nomes devem iniciar sempre na mesma posição X.
+* Valores à direita devem ficar alinhados pela borda direita.
+* Usar layout tipo grid/flex com largura definida, nunca posicionamento manual.
+* Aplicar tabular numerals/monospace apenas nos números se necessário.
+* Espaçamento consistente entre linhas.
+* Evitar que um nome maior desalinhe a lista inteira.
+
+2. Card “Mais ouvida no período”
+
+Atualmente apenas a capa pequena aparece à esquerda.
+
+Quero alterar:
+
+* A capa do álbum deve preencher o card inteiro como imagem de fundo.
+* Aplicar overlay escuro por cima (gradiente preto com opacidade aproximadamente 60–75%) para manter legibilidade.
+* O conteúdo (título, artista e plays) fica sobre a imagem.
+* Aplicar blur leve no fundo se necessário.
+* A capa precisa ocupar todo o card:
+    * background-size: cover
+    * background-position: center
+* Manter bordas arredondadas.
+
+Estrutura visual:
+
+[capa ocupando todo o card]
+[overlay escuro]
+MAIS OUVIDA NO PERÍODO
+
+EL CONDOR PASA
+One-T
+27 PLAYS
+
+3. Ajustar escala tipográfica
+
+Atualmente alguns textos estão grandes demais e cortam palavras importantes.
+
+Quero tornar a tipografia proporcional ao espaço disponível.
+
+Regras:
+
+* Reduzir automaticamente fontes em textos longos.
+* Evitar truncar palavras importantes.
+* Priorizar exibir mais texto antes de usar “…”.
+* Usar clamp() para fontes responsivas.
+
+Exemplo:
+
+Título principal:
+font-size: clamp(32px, 4vw, 64px)
+
+Nome da música:
+font-size: clamp(18px, 2vw, 38px)
+
+Artista:
+font-size: clamp(14px, 1.4vw, 24px)
+
+Listas:
+font-size: clamp(14px, 1.2vw, 28px)
+
+4. Melhorias adicionais sugeridas
+
+* Dar maior contraste entre título e subtítulo.
+* Aumentar ligeiramente espaçamento vertical entre seções.
+* Padronizar distância entre ícone e texto.
+* Evitar que o número de plays fique visualmente “grudado”.
+* Aplicar line-height consistente (~1.2–1.3).
+* Caso o nome seja muito longo:
+    * reduzir fonte antes de cortar
+    * só usar reticências como último recurso
+* Centralizar visualmente o bloco principal para reduzir sensação de peso na parte superior.
+* Adicionar margens internas um pouco maiores no card principal.
+* Manter a identidade atual; apenas melhorar organização, leitura e equilíbrio visual.
+
+Objetivo final: parecer um Spotify Wrapped moderno, limpo e profissional, sem perder informações importantes por corte ou desalinhamento.

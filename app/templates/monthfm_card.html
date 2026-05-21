@@ -40,7 +40,7 @@
     .card {
       width: 1080px;
       height: 2000px;
-      padding: 56px 64px 80px;
+      padding: 64px 72px 88px;
       display: flex;
       flex-direction: column;
     }
@@ -50,7 +50,7 @@
       display: flex;
       align-items: baseline;
       justify-content: space-between;
-      margin-bottom: 18px;
+      margin-bottom: 22px;
     }
     .brand {
       font-family: Inter;
@@ -59,10 +59,10 @@
       letter-spacing: -.02em;
       color: var(--blue);
     }
-    .brand .glyph { color: var(--accent); margin-right: 10px; }
+    .brand .glyph { color: var(--accent); margin-right: 12px; }
 
     .period {
-      margin-bottom: 30px;
+      margin-bottom: 44px;
     }
     .period .label {
       display: block;
@@ -72,7 +72,7 @@
       letter-spacing: .22em;
       text-transform: uppercase;
       color: var(--purple);
-      margin-bottom: 6px;
+      margin-bottom: 10px;
     }
     .period .value {
       font-family: 'Bebas Neue', Inter, sans-serif;
@@ -84,81 +84,96 @@
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: 952px;
+      max-width: 936px;
     }
 
-    /* HERO — glassmorphism ---------------------------------------------------- */
+    /* HERO — capa cobre o card, overlay escuro + blur ------------------------ */
     .hero {
-      display: flex;
-      align-items: center;
-      gap: 32px;
-      padding: 28px;
-      margin-bottom: 36px;
-      background: rgba(255, 255, 255, 0.07);
-      border: 1px solid rgba(255, 255, 255, 0.10);
-      border-radius: 28px;
-      backdrop-filter: blur(22px) saturate(140%);
-      -webkit-backdrop-filter: blur(22px) saturate(140%);
-      box-shadow:
-        inset 0 1px 0 rgba(255,255,255,.06),
-        0 22px 60px rgba(0,0,0,.35);
+      position: relative;
+      height: 420px;
+      border-radius: 32px;
+      overflow: hidden;
+      margin-bottom: 52px;
+      background-color: var(--surface);
+      box-shadow: 0 28px 72px rgba(0,0,0,.45);
     }
-    .hero-cover {
-      width: 196px;
-      height: 196px;
-      flex-shrink: 0;
+    .hero-bg {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
       object-fit: cover;
-      border-radius: 20px;
-      background: var(--surface-soft);
-      box-shadow: 0 20px 48px rgba(0,0,0,.55);
+      filter: blur(2px) saturate(115%);
+      transform: scale(1.06);
     }
-    .hero-info { min-width: 0; flex: 1; }
+    .hero-overlay {
+      position: absolute;
+      inset: 0;
+      background:
+        linear-gradient(180deg, rgba(11,10,26,.45) 0%, rgba(11,10,26,.78) 60%, rgba(11,10,26,.92) 100%),
+        linear-gradient(135deg, rgba(0,0,0,.35) 0%, rgba(0,0,0,0) 55%);
+    }
+    .hero-content {
+      position: relative;
+      z-index: 1;
+      height: 100%;
+      padding: 40px 48px;
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+    }
     .hero-label {
       font-size: {{ font_hero_label }}px;
       font-weight: 700;
       color: var(--accent);
-      letter-spacing: .08em;
+      letter-spacing: .12em;
       text-transform: uppercase;
-      margin-bottom: 10px;
+      margin-bottom: 14px;
       white-space: nowrap;
+      text-shadow: 0 2px 12px rgba(0,0,0,.55);
     }
     .hero-track {
-      font-size: {{ font_hero_track }}px;
-      font-weight: 800;
-      line-height: 1.04;
+      font-size: {{ hero_track_font_size }}px;
+      font-weight: 900;
+      line-height: 1.06;
       letter-spacing: -.025em;
-      color: var(--text);
+      color: #FFFFFF;
+      text-transform: uppercase;
       overflow: hidden;
       display: -webkit-box;
       -webkit-line-clamp: 2;
       -webkit-box-orient: vertical;
+      text-shadow: 0 4px 22px rgba(0,0,0,.6);
     }
     .hero-artist {
-      margin-top: 8px;
+      margin-top: 10px;
       font-size: {{ font_hero_artist }}px;
       font-weight: 500;
       font-style: italic;
-      color: var(--muted);
+      color: rgba(255,255,255,.82);
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
+      text-shadow: 0 2px 14px rgba(0,0,0,.55);
     }
     .hero-plays {
-      margin-top: 6px;
+      margin-top: 18px;
       font-family: Inter;
       font-weight: 900;
       font-size: {{ font_hero_plays_value }}px;
       letter-spacing: -.01em;
       color: var(--accent);
       font-variant-numeric: lining-nums tabular-nums;
+      line-height: 1;
+      text-shadow: 0 4px 18px rgba(0,0,0,.55);
     }
     .hero-plays .unit {
       font-family: Inter;
-      font-weight: 600;
+      font-weight: 700;
       font-size: {{ font_hero_plays_unit }}px;
-      margin-left: 10px;
-      color: var(--muted);
-      letter-spacing: .04em;
+      margin-left: 14px;
+      color: rgba(255,255,255,.78);
+      letter-spacing: .14em;
       text-transform: uppercase;
     }
 
@@ -173,28 +188,28 @@
       font-size: {{ font_col_title }}px;
       font-weight: 800;
       color: var(--muted);
-      letter-spacing: .10em;
+      letter-spacing: .12em;
       text-transform: uppercase;
-      margin-bottom: 22px;
+      margin-bottom: 28px;
       white-space: nowrap;
     }
-    .col-title .accent-icon { color: var(--accent); margin-right: 10px; }
+    .col-title .accent-icon { color: var(--accent); margin-right: 14px; }
 
     .list {
       display: flex;
       flex-direction: column;
-      gap: 24px;
+      gap: 28px;
     }
     .row {
       display: grid;
-      grid-template-columns: 80px minmax(0, 1fr) 110px;
+      grid-template-columns: 56px minmax(0, 1fr) 110px;
       column-gap: 14px;
       align-items: baseline;
     }
     .rank {
       font-family: Inter;
       font-weight: 900;
-      font-size: {{ font_list_rank }}px;
+      font-size: 56px;
       color: var(--purple);
       font-variant-numeric: lining-nums tabular-nums;
       line-height: 1;
@@ -205,11 +220,10 @@
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
-      font-size: {{ font_list_item_name }}px;
       font-weight: 700;
-      letter-spacing: -.025em;
+      letter-spacing: -.02em;
       color: var(--text);
-      line-height: 1.06;
+      line-height: 1.2;
     }
     .name .sub {
       display: block;
@@ -217,11 +231,11 @@
       overflow: hidden;
       white-space: nowrap;
       text-overflow: ellipsis;
-      font-size: {{ font_list_item_sub }}px;
       font-weight: 500;
       font-style: italic;
-      letter-spacing: -.01em;
+      letter-spacing: -.005em;
       color: var(--muted);
+      line-height: 1.25;
     }
     .count {
       font-family: Inter;
@@ -236,8 +250,8 @@
 
     /* FOOTER ----------------------------------------------------------------- */
     .footer {
-      margin-top: 30px;
-      padding-top: 26px;
+      margin-top: 44px;
+      padding-top: 32px;
       border-top: 1px solid var(--line);
       display: flex;
       align-items: flex-end;
@@ -254,7 +268,7 @@
     }
     .footer .total-meta {
       text-align: right;
-      padding-bottom: 10px;
+      padding-bottom: 12px;
     }
     .footer .total-meta .word {
       font-family: Inter;
@@ -267,7 +281,7 @@
     }
     .footer .total-meta .hint {
       display: block;
-      margin-top: 6px;
+      margin-top: 8px;
       font-family: Inter;
       font-size: {{ font_footer_hint }}px;
       font-weight: 600;
@@ -289,8 +303,9 @@
     </div>
 
     <section class="hero">
-      <img class="hero-cover" src="{{ hero_image }}" alt="" />
-      <div class="hero-info">
+      <img class="hero-bg" src="{{ hero_image }}" alt="" />
+      <div class="hero-overlay"></div>
+      <div class="hero-content">
         <div class="hero-label">Mais ouvida no período</div>
         <div class="hero-track">{{ hero_track }}</div>
         <div class="hero-artist">{{ hero_artist }}</div>

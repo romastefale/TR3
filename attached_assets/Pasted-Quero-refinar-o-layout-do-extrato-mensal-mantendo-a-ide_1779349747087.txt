@@ -1,0 +1,130 @@
+Quero refinar o layout do extrato mensal mantendo a identidade visual atual (dark + roxo/rosa), corrigindo problemas de hierarquia, alinhamento e legibilidade.
+
+LISTAS “TOP ARTISTAS” E “TOP MÚSICAS” — ALINHAMENTO RÍGIDO
+
+Atualmente os rankings parecem desalinhados porque os números (01, 02, 03…) não seguem uma grade fixa.
+
+Transformar as duas listas em estrutura de colunas fixas:
+
+[ranking] [nome] [valor]
+
+Exemplo:
+
+01   Zara Larsson          184
+02   Rihanna               140
+03   Lady Gaga             112
+04   Priscilla             101
+05   Muse                   83
+
+e:
+
+01   El Condor Pasa         27
+02   El Condor Pasa         21
+03   Midnight Sun           12
+04   Eurosong               11
+05   Pretty Girls           11
+
+Regras obrigatórias:
+
+* O ranking (01, 02, 03, 04, 05) deve ocupar largura fixa.
+* O alinhamento vertical precisa ser exato:
+    * 01 alinhado com 01
+    * 02 alinhado com 02
+    * 03 alinhado com 03
+* Números não podem empurrar nomes.
+* Todos os nomes iniciam na mesma coordenada horizontal.
+* Valores à direita alinhados pela borda direita.
+* Usar Grid ou Flex com largura fixa; evitar posicionamento manual.
+* Aplicar tabular numerals nos números.
+* Espaçamento vertical consistente.
+* Nomes grandes não podem quebrar a estrutura inteira.
+
+Exemplo técnico:
+
+grid-template-columns: 56px 1fr auto
+
+Onde:
+
+* primeira coluna = ranking
+* segunda coluna = nome
+* terceira coluna = valor
+
+CARD “MAIS OUVIDA NO PERÍODO”
+
+Alterar completamente a composição atual.
+
+Em vez de mostrar apenas uma miniatura da capa:
+
+* A capa do álbum deve preencher todo o card.
+* Usar a capa como background principal.
+* Aplicar overlay escuro (preto com opacidade entre 60–75%).
+* Aplicar blur leve no fundo se necessário.
+* Manter bordas arredondadas.
+* Manter o texto acima da imagem.
+
+Usar:
+
+background-size: cover
+background-position: center
+
+Estrutura:
+
+[capa ocupando o card inteiro]
+
+[overlay escuro]
+
+MAIS OUVIDA NO PERÍODO
+
+EL CONDOR PASA
+
+One-T
+
+27 PLAYS
+
+ESCALA TIPOGRÁFICA RESPONSIVA
+
+Atualmente alguns textos são grandes demais e cortam palavras importantes.
+
+Regras:
+
+* Reduzir fonte automaticamente conforme tamanho do conteúdo.
+* Priorizar exibir texto completo antes de usar “…”.
+* Reticências somente como último recurso.
+* Usar clamp().
+
+Exemplos:
+
+Título principal:
+
+font-size: clamp(32px, 4vw, 64px)
+
+Nome da música:
+
+font-size: clamp(18px, 2vw, 38px)
+
+Artista:
+
+font-size: clamp(14px, 1.4vw, 24px)
+
+Listas:
+
+font-size: clamp(14px, 1.2vw, 28px)
+
+MELHORIAS ADICIONAIS
+
+* Aumentar espaçamento vertical entre seções.
+* Melhorar contraste entre título e subtítulo.
+* Padronizar distância entre ícones e textos.
+* Separar visualmente número de plays.
+* Aplicar line-height entre 1.2 e 1.3.
+* Aumentar padding interno do card principal.
+* Centralizar melhor o conteúdo geral.
+* Diminuir sensação de peso visual na parte superior.
+* Quando o texto for muito grande:
+    1. reduzir fonte
+    2. ajustar largura disponível
+    3. somente depois usar “…”
+
+Objetivo final:
+
+Quero aparência semelhante a um Spotify Wrapped moderno e profissional, preservando todas as informações importantes, sem cortes, desalinhamentos ou excesso de reticências.
