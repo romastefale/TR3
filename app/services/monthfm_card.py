@@ -294,6 +294,29 @@ def _period_font_size(value: str) -> int:
     return _step_size(value, PERIOD_VALUE_STEPS)
 
 
+def _minutes_unit_scale(minutes_text: str) -> float:
+    """Calcula scaleX para que 'minutos ouvindo' fique com a MESMA LARGURA
+    visual do número de minutos acima (mantendo font-size atual ~48px).
+
+    Heurística baseada em advance widths típicos do Inter:
+    - Inter Black 160px: dígito ≈ 0.555em, '.' ≈ 0.30em
+    - Inter ExtraBold 48px uppercase + letter-spacing .04em:
+      'MINUTOS OUVINDO' (15 glyphs c/ espaço) ≈ 475px de largura natural.
+    """
+    number_width = 0.0
+    for ch in minutes_text:
+        if ch.isdigit():
+            number_width += 0.555 * 160.0
+        elif ch == ".":
+            number_width += 0.30 * 160.0
+        else:
+            number_width += 0.45 * 160.0
+    word_natural = 475.0
+    raw = number_width / word_natural if word_natural else 1.0
+    # Clamp para evitar deformação extrema em casos limite.
+    return round(max(0.45, min(1.6, raw)), 3)
+
+
 def build_monthfm_card_html(data: MonthfmCardData) -> str:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
     theme = THEMES.get(data.theme, THEMES["dark"])
@@ -321,6 +344,7 @@ def build_monthfm_card_html(data: MonthfmCardData) -> str:
         "artist_rows": _artist_rows(data.top_artists),
         "track_rows": _track_rows(data.top_tracks),
         "minutes": _format_number(data.minutes),
+        "minutes_unit_scale": str(_minutes_unit_scale(_format_number(data.minutes))),
         # Accent dinâmico da capa.
         "accent": accent_hex,
         "accent_glow_top": hex_to_rgba(accent_hex, 0.18),

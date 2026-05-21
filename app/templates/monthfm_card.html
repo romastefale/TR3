@@ -49,7 +49,7 @@
     .header {
       display: flex;
       align-items: baseline;
-      justify-content: space-between;
+      justify-content: flex-end;
       margin-bottom: 22px;
     }
     .brand {
@@ -90,10 +90,10 @@
     /* HERO — capa cobre o card, overlay escuro + blur ------------------------ */
     .hero {
       position: relative;
-      height: 420px;
+      height: 560px;
       border-radius: 32px;
       overflow: hidden;
-      margin-bottom: 52px;
+      margin-bottom: 36px;
       background-color: var(--surface);
       box-shadow: 0 28px 72px rgba(0,0,0,.45);
     }
@@ -257,6 +257,7 @@
     }
     .footer .word {
       margin-top: 14px;
+      display: inline-block;
       font-family: Inter;
       font-weight: 800;
       font-size: {{ font_footer_unit }}px;
@@ -264,6 +265,9 @@
       letter-spacing: .04em;
       color: var(--accent);
       text-transform: uppercase;
+      white-space: nowrap;
+      transform: scaleX({{ minutes_unit_scale }});
+      transform-origin: left center;
     }
   </style>
 </head>
