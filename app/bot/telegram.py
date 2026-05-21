@@ -383,7 +383,7 @@ def _register_handlers(dp: Dispatcher) -> None:
         await query.answer([result], cache_time=2, is_personal=True)
 
     # IMPORTANTE: o filtro `~F.text.startswith("/")` impede que este handler
-    # consuma comandos. Sem isso, qualquer texto começando com "/" (ex.: /sat,
+    # consuma comandos. Sem isso, qualquer texto começando com "/" (ex.:
     # /weekfm, /monthfm em sub-routers) bateria neste handler primeiro, o
     # `return` cedo devolveria None ao observer (que NÃO é UNHANDLED em
     # aiogram3), e a propagação para sub-routers seria abortada.
