@@ -108,9 +108,10 @@
       font-size: {{ font_hero_label }}px;
       font-weight: 700;
       color: var(--muted);
-      letter-spacing: .14em;
+      letter-spacing: .08em;
       text-transform: uppercase;
       margin-bottom: 10px;
+      white-space: nowrap;
     }
     .hero-track {
       font-size: {{ font_hero_track }}px;
@@ -157,9 +158,10 @@
       font-size: {{ font_col_title }}px;
       font-weight: 800;
       color: var(--muted);
-      letter-spacing: .16em;
+      letter-spacing: .10em;
       text-transform: uppercase;
       margin-bottom: 20px;
+      white-space: nowrap;
     }
     .col-title .accent { color: var(--green); margin-right: 8px; }
 
@@ -170,8 +172,8 @@
     }
     .row {
       display: grid;
-      grid-template-columns: 120px minmax(0, 1fr) auto;
-      column-gap: 20px;
+      grid-template-columns: 88px minmax(0, 1fr) auto;
+      column-gap: 18px;
       align-items: baseline;
     }
     .rank {

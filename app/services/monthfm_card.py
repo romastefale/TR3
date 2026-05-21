@@ -32,28 +32,33 @@ TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "monthfm_car
 # quanto pelo fallback Pillow — fonte única da verdade.
 # =========================================================================
 FONT_SCALE: dict[str, int] = {
-    "eyebrow":     48,   # micro-labels, texto mudo
-    "body":        56,   # texto secundário
-    "subtitle":    68,   # subtítulo, artista do hero
-    "body-strong": 80,   # corpo destacado, números médios
-    "display-sm": 104,   # títulos de seção, hero track, ranks
+    "micro":       36,   # labels secundárias com tracking
+    "eyebrow":     44,   # micro-labels (col titles)
+    "body":        52,   # texto secundário, nomes da lista
+    "subtitle":    64,   # subtítulo, contagem da lista
+    "body-strong": 80,   # números médios, ranks da lista
+    "display-sm":  96,   # hero track
     "display-md": 140,   # unidade gigante ("minutos")
     "display-lg": 320,   # display principal (total minutos)
 }
 
+# CARD_FONTS — calibrado para o canvas 1080×1900 com coluna útil 952px e
+# cada coluna de lista com ~448px. Itens que estouram (label do hero,
+# títulos de coluna, nome do item) ficam num passo abaixo dos heróis
+# (hero_track, display-lg total) que permanecem dominantes.
 CARD_FONTS: dict[str, int] = {
     "brand":            FONT_SCALE["body-strong"],    # ♫ tigraoRADIO
     "period_label":     FONT_SCALE["subtitle"],       # EXTRATO MENSAL/SEMANAL
-    "hero_label":       FONT_SCALE["eyebrow"],        # MAIS OUVIDA NO PERÍODO
+    "hero_label":       FONT_SCALE["micro"],          # MAIS OUVIDA NO PERÍODO (1 linha)
     "hero_track":       FONT_SCALE["display-sm"],     # nome da música hero
-    "hero_artist":      FONT_SCALE["subtitle"],       # artista do hero
+    "hero_artist":      FONT_SCALE["body"],           # artista do hero
     "hero_plays_value": FONT_SCALE["body-strong"],    # número de plays do hero
     "hero_plays_unit":  FONT_SCALE["body"],           # palavra "plays"
-    "col_title":        FONT_SCALE["body"],           # TOP ARTISTAS / TOP MÚSICAS
-    "list_rank":        FONT_SCALE["display-sm"],     # 01..05
-    "list_item_name":   FONT_SCALE["subtitle"],       # nome do item da lista
-    "list_item_sub":    FONT_SCALE["eyebrow"],        # subnome (artista)
-    "list_item_count":  FONT_SCALE["body-strong"],    # contagem do item
+    "col_title":        FONT_SCALE["eyebrow"],        # TOP ARTISTAS / TOP MÚSICAS (1 linha)
+    "list_rank":        FONT_SCALE["body-strong"],    # 01..05
+    "list_item_name":   FONT_SCALE["body"],           # nome do item da lista
+    "list_item_sub":    FONT_SCALE["micro"],          # subnome (artista)
+    "list_item_count":  FONT_SCALE["subtitle"],       # contagem do item
     "footer_total":     FONT_SCALE["display-lg"],     # 800
     "footer_unit":      FONT_SCALE["display-md"],     # minutos
     "footer_hint":      FONT_SCALE["eyebrow"],        # NO PERÍODO
