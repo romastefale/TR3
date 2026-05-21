@@ -491,9 +491,13 @@ async def render_monthfm_card(data: MonthfmCardData) -> bytes | None:
     try:
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(args=["--no-sandbox"])
+            # Render at 2x density (retina). Telegram comprime photos via
+            # send_photo, então renderizar em 2160x2700 e deixar o servidor
+            # downscalar mantém o texto nítido — texto pequeno no preview
+            # vem justamente de DSF=1 + compressão Telegram.
             page = await browser.new_page(
                 viewport={"width": CARD_WIDTH, "height": CARD_HEIGHT},
-                device_scale_factor=1,
+                device_scale_factor=2,
             )
             await page.set_content(html_content, wait_until="networkidle", timeout=20000)
             try:
