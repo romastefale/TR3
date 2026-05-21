@@ -257,7 +257,23 @@ class LastfmService:
             cover,
         )
 
-        track_url = item.get("url") or f"https://www.last.fm/user/{quote(username)}/library"
+        # Upgrade do link: tenta resolver a faixa no Spotify (Client
+        # Credentials, sem precisar do usuário logado) para abrir direto
+        # no player. Em qualquer falha cai pro link do Last.fm.
+        spotify_track_url: str | None = None
+        try:
+            from app.services.spotify import spotify_service  # import local p/ evitar ciclos
+            spotify_track_url = await spotify_service.search_track(artist, track_name)
+        except Exception:
+            logger.exception(
+                "Spotify upgrade failed | artist=%s | track=%s", artist, track_name
+            )
+
+        track_url = (
+            spotify_track_url
+            or item.get("url")
+            or f"https://www.last.fm/user/{quote(username)}/library"
+        )
         album_url = f"https://www.last.fm/music/{quote(artist)}/{quote(album)}" if album else track_url
 
         return {

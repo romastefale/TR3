@@ -21,10 +21,21 @@ from app.models.spotify_token import SpotifyToken
 logger = logging.getLogger(__name__)
 
 
+_TRACK_SEARCH_CACHE_MAX = 4096
+_TRACK_SEARCH_TTL_HIT = timedelta(hours=24)
+_TRACK_SEARCH_TTL_MISS = timedelta(hours=2)
+
+
 class SpotifyService:
     def __init__(self) -> None:
         self._client_access_token: str | None = None
         self._client_token_expiration: datetime | None = None
+        # Cache (artist_lower, title_lower) -> (url_or_None, expires_at).
+        # Negative results são cacheados com TTL menor (faixas raras /
+        # ambíguas evitam bater na Search API toda execução).
+        self._track_search_cache: dict[
+            tuple[str, str], tuple[str | None, datetime]
+        ] = {}
 
     async def shutdown(self) -> None:
         logger.info("Spotify service stopped.")
@@ -261,6 +272,64 @@ class SpotifyService:
             "album_url": (album.get("external_urls") or {}).get("spotify"),
             "album_image_url": images[0].get("url") if images else None,
         }
+
+    async def search_track(self, artist: str, title: str) -> str | None:
+        """Resolve artist+title -> canonical Spotify track URL via Search API.
+
+        Usa Client Credentials (app-only auth), portanto NÃO requer que o
+        usuário esteja logado no Spotify. Retorna
+        `https://open.spotify.com/track/{id}` quando há match e None caso
+        contrário. Resultados são cacheados em memória com TTL.
+        """
+        a = (artist or "").strip()
+        t = (title or "").strip()
+        if not a or not t:
+            return None
+        key = (a.lower(), t.lower())
+        now = datetime.utcnow()
+        cached = self._track_search_cache.get(key)
+        if cached and cached[1] > now:
+            return cached[0]
+
+        token = await self._get_client_credentials_token()
+        if not token:
+            return None
+
+        # Operadores `track:` e `artist:` com aspas restringem o match aos
+        # campos exatos, reduzindo falso-positivos com títulos genéricos.
+        query = f'track:"{t}" artist:"{a}"'
+        url: str | None = None
+        try:
+            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
+                resp = await client.get(
+                    "https://api.spotify.com/v1/search",
+                    params={"q": query, "type": "track", "limit": 1, "market": "BR"},
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+            if resp.status_code == 200:
+                items = ((resp.json().get("tracks") or {}).get("items") or [])
+                if items:
+                    url = (items[0].get("external_urls") or {}).get("spotify")
+            else:
+                logger.warning(
+                    "Spotify search non-200 | status=%s | artist=%s | title=%s",
+                    resp.status_code, a, t,
+                )
+        except Exception:
+            logger.exception(
+                "Spotify search request failed | artist=%s | title=%s", a, t
+            )
+            # Não cacheia erros de rede para tentar de novo logo.
+            return None
+
+        ttl = _TRACK_SEARCH_TTL_HIT if url else _TRACK_SEARCH_TTL_MISS
+        self._track_search_cache[key] = (url, now + ttl)
+        # Bound do cache: se exceder o limite, descarta os 25% mais antigos.
+        if len(self._track_search_cache) > _TRACK_SEARCH_CACHE_MAX:
+            oldest = sorted(self._track_search_cache.items(), key=lambda kv: kv[1][1])
+            for k, _ in oldest[: len(oldest) // 4]:
+                self._track_search_cache.pop(k, None)
+        return url
 
     async def clear_user_session(self, user_id: int) -> bool:
         with SessionLocal() as db:
