@@ -245,29 +245,43 @@ class LastfmService:
                     cover = image.get("#text")
                     break
 
-        deezer_cover = await self._find_deezer_cover(artist=artist, track_name=track_name, album=album or None)
-        if deezer_cover:
-            cover = deezer_cover
+        # Upgrade Spotify (Client Credentials, sem precisar do usuário
+        # logado): UMA chamada à Search API resolve link DA música +
+        # capa 640px no mesmo payload. Ordem de preferência da capa:
+        # spotify (oficial 640px) > deezer (fallback existente) > lastfm.
+        spotify_track_url: str | None = None
+        spotify_cover: str | None = None
+        try:
+            from app.services.spotify import spotify_service  # import local p/ evitar ciclos
+            match = await spotify_service.search_track(artist, track_name)
+            if match:
+                spotify_track_url = match.get("url")
+                spotify_cover = match.get("cover")
+        except Exception:
+            logger.exception(
+                "Spotify upgrade failed | artist=%s | track=%s", artist, track_name
+            )
+
+        cover_source = "lastfm"
+        if spotify_cover:
+            cover = spotify_cover
+            cover_source = "spotify"
+        else:
+            # Spotify miss → preserva o fallback Deezer atual.
+            deezer_cover = await self._find_deezer_cover(
+                artist=artist, track_name=track_name, album=album or None
+            )
+            if deezer_cover:
+                cover = deezer_cover
+                cover_source = "deezer"
         logger.info(
             "Last.fm track mapped | username=%s | artist=%s | track=%s | cover_source=%s | cover=%s",
             username,
             artist,
             track_name,
-            "deezer" if deezer_cover else "lastfm",
+            cover_source,
             cover,
         )
-
-        # Upgrade do link: tenta resolver a faixa no Spotify (Client
-        # Credentials, sem precisar do usuário logado) para abrir direto
-        # no player. Em qualquer falha cai pro link do Last.fm.
-        spotify_track_url: str | None = None
-        try:
-            from app.services.spotify import spotify_service  # import local p/ evitar ciclos
-            spotify_track_url = await spotify_service.search_track(artist, track_name)
-        except Exception:
-            logger.exception(
-                "Spotify upgrade failed | artist=%s | track=%s", artist, track_name
-            )
 
         track_url = (
             spotify_track_url

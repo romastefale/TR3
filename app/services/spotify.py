@@ -33,8 +33,9 @@ class SpotifyService:
         # Cache (artist_lower, title_lower) -> (url_or_None, expires_at).
         # Negative results são cacheados com TTL menor (faixas raras /
         # ambíguas evitam bater na Search API toda execução).
+        # value = (record_or_None, expires_at). record = {"url": str, "cover": str|None}
         self._track_search_cache: dict[
-            tuple[str, str], tuple[str | None, datetime]
+            tuple[str, str], tuple[dict[str, str | None] | None, datetime]
         ] = {}
 
     async def shutdown(self) -> None:
@@ -273,13 +274,15 @@ class SpotifyService:
             "album_image_url": images[0].get("url") if images else None,
         }
 
-    async def search_track(self, artist: str, title: str) -> str | None:
-        """Resolve artist+title -> canonical Spotify track URL via Search API.
+    async def search_track(self, artist: str, title: str) -> dict[str, str | None] | None:
+        """Resolve artist+title -> {url, cover} via Spotify Search API.
 
         Usa Client Credentials (app-only auth), portanto NÃO requer que o
-        usuário esteja logado no Spotify. Retorna
-        `https://open.spotify.com/track/{id}` quando há match e None caso
-        contrário. Resultados são cacheados em memória com TTL.
+        usuário esteja logado no Spotify. Retorna um dict
+        `{"url": "https://open.spotify.com/track/{id}", "cover": "...640px..."}`
+        ou None quando não há match / API indisponível. URL e capa vêm
+        no MESMO payload (sem chamadas extras). Resultados cacheados em
+        memória com TTL — o ganho de capa é "de graça" depois do link.
         """
         a = (artist or "").strip()
         t = (title or "").strip()
@@ -298,7 +301,7 @@ class SpotifyService:
         # Operadores `track:` e `artist:` com aspas restringem o match aos
         # campos exatos, reduzindo falso-positivos com títulos genéricos.
         query = f'track:"{t}" artist:"{a}"'
-        url: str | None = None
+        record: dict[str, str | None] | None = None
         try:
             async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
                 resp = await client.get(
@@ -309,7 +312,13 @@ class SpotifyService:
             if resp.status_code == 200:
                 items = ((resp.json().get("tracks") or {}).get("items") or [])
                 if items:
-                    url = (items[0].get("external_urls") or {}).get("spotify")
+                    item = items[0]
+                    url = (item.get("external_urls") or {}).get("spotify")
+                    images = (item.get("album") or {}).get("images") or []
+                    # images[0] = maior resolução (640px) por convenção da API.
+                    cover = images[0].get("url") if images else None
+                    if url:
+                        record = {"url": url, "cover": cover}
             else:
                 logger.warning(
                     "Spotify search non-200 | status=%s | artist=%s | title=%s",
@@ -322,14 +331,14 @@ class SpotifyService:
             # Não cacheia erros de rede para tentar de novo logo.
             return None
 
-        ttl = _TRACK_SEARCH_TTL_HIT if url else _TRACK_SEARCH_TTL_MISS
-        self._track_search_cache[key] = (url, now + ttl)
+        ttl = _TRACK_SEARCH_TTL_HIT if record else _TRACK_SEARCH_TTL_MISS
+        self._track_search_cache[key] = (record, now + ttl)
         # Bound do cache: se exceder o limite, descarta os 25% mais antigos.
         if len(self._track_search_cache) > _TRACK_SEARCH_CACHE_MAX:
             oldest = sorted(self._track_search_cache.items(), key=lambda kv: kv[1][1])
             for k, _ in oldest[: len(oldest) // 4]:
                 self._track_search_cache.pop(k, None)
-        return url
+        return record
 
     async def clear_user_session(self, user_id: int) -> bool:
         with SessionLocal() as db:
