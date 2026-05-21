@@ -13,7 +13,7 @@ from PIL import Image, ImageDraw, ImageFont
 logger = logging.getLogger(__name__)
 
 CARD_WIDTH = 1080
-CARD_HEIGHT = 1350
+CARD_HEIGHT = 1900
 DEFAULT_BOT_NAME = "tigraoRADIO"
 TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "monthfm_card.html"
 
@@ -32,13 +32,13 @@ TEMPLATE_PATH = Path(__file__).resolve().parents[1] / "templates" / "monthfm_car
 # quanto pelo fallback Pillow — fonte única da verdade.
 # =========================================================================
 FONT_SCALE: dict[str, int] = {
-    "eyebrow":     24,   # micro-labels, texto mudo
-    "body":        28,   # texto secundário
-    "subtitle":    34,   # subtítulo, artista do hero
-    "body-strong": 40,   # corpo destacado, números médios
-    "display-sm":  52,   # títulos de seção, hero track, ranks
-    "display-md":  70,   # unidade gigante ("minutos")
-    "display-lg": 160,   # display principal (total minutos)
+    "eyebrow":     48,   # micro-labels, texto mudo
+    "body":        56,   # texto secundário
+    "subtitle":    68,   # subtítulo, artista do hero
+    "body-strong": 80,   # corpo destacado, números médios
+    "display-sm": 104,   # títulos de seção, hero track, ranks
+    "display-md": 140,   # unidade gigante ("minutos")
+    "display-lg": 320,   # display principal (total minutos)
 }
 
 CARD_FONTS: dict[str, int] = {
@@ -491,10 +491,9 @@ async def render_monthfm_card(data: MonthfmCardData) -> bytes | None:
     try:
         async with async_playwright() as playwright:
             browser = await playwright.chromium.launch(args=["--no-sandbox"])
-            # Render at 2x density (retina). Telegram comprime photos via
-            # send_photo, então renderizar em 2160x2700 e deixar o servidor
-            # downscalar mantém o texto nítido — texto pequeno no preview
-            # vem justamente de DSF=1 + compressão Telegram.
+            # Render at 2x density (retina). CSS já é grande (1080x1900,
+            # fontes 2x maiores via FONT_SCALE). Com DSF=2, físico = 2160x3800,
+            # W+H=5960 dentro do limite Telegram (≤10000).
             page = await browser.new_page(
                 viewport={"width": CARD_WIDTH, "height": CARD_HEIGHT},
                 device_scale_factor=2,
@@ -504,7 +503,7 @@ async def render_monthfm_card(data: MonthfmCardData) -> bytes | None:
                 await page.evaluate("document.fonts && document.fonts.ready")
             except Exception:
                 logger.debug("MONTHFM_CARD_FONTS_READY_FAILED", exc_info=True)
-            return await page.screenshot(type="jpeg", quality=92, full_page=False, timeout=15000)
+            return await page.screenshot(type="jpeg", quality=92, full_page=False, timeout=20000)
     except Exception:
         logger.exception(
             "MONTHFM_CARD_RENDER_FAILED | theme=%s | period=%s",
