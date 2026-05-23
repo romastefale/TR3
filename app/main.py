@@ -13,6 +13,12 @@ from app.bot.monthfm import monthfm as monthfm_command, router as monthfm_router
 from app.bot.weekfm import router as weekfm_router, weekfm as weekfm_command
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
 from app.bot.tigraoresponde import handle_tigraoresponde_update
+from app.btb import btb_router
+from app.btb.keyboards import home_keyboard as btb_home_keyboard
+from app.btb.relay import capture_bot_message as btb_capture_bot_message
+from app.btb.router import on_text as btb_on_text
+from app.btb.state import clear_waiting as btb_clear_waiting, get_session as btb_get_session
+from app.btb.storage import ensure_tables as btb_ensure_tables
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
 from app.db.database import engine, init_db, run_migrations
 from app.moderation_tigrao import customize_router as tigrao_customize_router, ddx_router as tigrao_ddx_router, member_tag_router as tigrao_member_tag_router, pinned_media_router as tigrao_pinned_media_router, router as tigrao_router
@@ -71,6 +77,13 @@ def _is_monthfm_command(text_value: str | None) -> bool:
 
 def _is_weekfm_command(text_value: str | None) -> bool:
     return _command_name(text_value) == "/weekfm"
+
+
+def _is_btb_command(text_value: str | None) -> bool:
+    return _command_name(text_value) == "/btb"
+
+
+BTB_WAITING_STATES = {"command_text", "group_chat_id", "wait_seconds", "add_target_username"}
 
 
 def _log_message_update(update: Update) -> None:
@@ -170,6 +183,55 @@ async def _handle_weekfm_direct(update: Update) -> bool:
     return True
 
 
+async def _handle_btb_direct(update: Update) -> bool:
+    message = update.message
+    if not message or not _is_btb_command(message.text):
+        return False
+    logger.warning(
+        "BTB_DIRECT_RECEIVED | update_id=%s | chat_type=%s | from_id=%s",
+        update.update_id,
+        getattr(message.chat, "type", None),
+        getattr(message.from_user, "id", None),
+    )
+    if not is_owner_private_message(message):
+        return True
+    btb_clear_waiting()
+    from app.btb.router import _home_text as btb_home_text
+    await message.answer(
+        btb_home_text(),
+        reply_markup=btb_home_keyboard(btb_get_session()),
+        parse_mode="HTML",
+    )
+    return True
+
+
+async def _handle_btb_waiting_text_direct(update: Update) -> bool:
+    message = update.message
+    if not message or not message.text:
+        return False
+    if not is_owner_private_message(message):
+        return False
+    if btb_get_session().waiting_for not in BTB_WAITING_STATES:
+        return False
+    logger.warning(
+        "BTB_WAITING_TEXT_DIRECT | update_id=%s | waiting_for=%s",
+        update.update_id,
+        btb_get_session().waiting_for,
+    )
+    await btb_on_text(message)
+    return True
+
+
+async def _handle_btb_capture(update: Update) -> None:
+    message = update.message
+    if not message:
+        return
+    try:
+        await btb_capture_bot_message(message)
+    except Exception:
+        logger.exception("BTB_CAPTURE_HOOK_FAILED | update_id=%s", update.update_id)
+
+
 async def _handle_tigrao_waiting_text_direct(update: Update) -> bool:
     message = update.message
     if not message or not message.text:
@@ -249,8 +311,13 @@ async def on_startup() -> None:
             dispatcher.include_router(tigrao_router)
             dispatcher.include_router(monthfm_router)
             dispatcher.include_router(weekfm_router)
+            dispatcher.include_router(btb_router)
             _register_handlers(dispatcher)
             _telegram_dispatcher_configured = True
+        try:
+            btb_ensure_tables()
+        except Exception:
+            logger.exception("BTB_ENSURE_TABLES_FAILED")
         await bot.set_webhook(
             f"{BASE_URL}/webhook",
             allowed_updates=dispatcher.resolve_used_update_types(),
@@ -310,6 +377,7 @@ async def telegram_webhook(request: Request):
             _remember_group_from_update(update)
         except Exception:
             logger.exception("TIGRAO_GROUP_REMEMBER_FAILED | update_id=%s", update.update_id)
+        await _handle_btb_capture(update)
         try:
             tigraoresponde_handled = await handle_tigraoresponde_update(bot, update)
         except Exception:
@@ -337,6 +405,20 @@ async def telegram_webhook(request: Request):
             logger.exception("WEEKFM_DIRECT_FAILED | update_id=%s", update.update_id)
             weekfm_handled = False
         if weekfm_handled:
+            return {"ok": True}
+        try:
+            btb_handled = await _handle_btb_direct(update)
+        except Exception:
+            logger.exception("BTB_DIRECT_FAILED | update_id=%s", update.update_id)
+            btb_handled = False
+        if btb_handled:
+            return {"ok": True}
+        try:
+            btb_waiting_handled = await _handle_btb_waiting_text_direct(update)
+        except Exception:
+            logger.exception("BTB_WAITING_TEXT_DIRECT_FAILED | update_id=%s", update.update_id)
+            btb_waiting_handled = False
+        if btb_waiting_handled:
             return {"ok": True}
         try:
             tigrao_waiting_media_handled = await _handle_tigrao_waiting_media_direct(update)
