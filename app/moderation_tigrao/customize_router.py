@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import logging
+import time
+
 from aiogram import F, Router
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import CallbackQuery, Message
 
 from app.moderation_tigrao.actions import set_group_photo
@@ -11,7 +14,30 @@ from app.moderation_tigrao.state import clear_action, get_session, set_action
 from app.moderation_tigrao.storage import log_action
 from app.moderation_tigrao.texts import error_text, success_text
 
+logger = logging.getLogger(__name__)
 router = Router(name="moderation_tigrao_customize")
+
+_PHOTO_SERVICE_TTL_SECONDS = 60.0
+_recent_photo_changes: dict[int, float] = {}
+
+
+def _mark_photo_changed(chat_id: int) -> None:
+    now = time.time()
+    _recent_photo_changes[chat_id] = now
+    stale = [cid for cid, ts in _recent_photo_changes.items() if now - ts > _PHOTO_SERVICE_TTL_SECONDS]
+    for cid in stale:
+        _recent_photo_changes.pop(cid, None)
+
+
+def _consume_recent_photo_change(chat_id: int) -> bool:
+    ts = _recent_photo_changes.get(chat_id)
+    if ts is None:
+        return False
+    if time.time() - ts > _PHOTO_SERVICE_TTL_SECONDS:
+        _recent_photo_changes.pop(chat_id, None)
+        return False
+    _recent_photo_changes.pop(chat_id, None)
+    return True
 
 
 def _need_group_text() -> str:
@@ -79,6 +105,7 @@ async def tigrao_receive_group_photo(message: Message) -> None:
             raise RuntimeError("download_file retornou vazio")
         raw = image_bytes.read()
         await set_group_photo(message.bot, int(session.selected_chat_id), raw, filename=filename)
+        _mark_photo_changed(int(session.selected_chat_id))
         log_action(chat_id=int(session.selected_chat_id), action="customize_photo", status="success")
         clear_action()
         await message.answer(
@@ -103,3 +130,39 @@ async def tigrao_receive_group_photo(message: Message) -> None:
             error_text("Falha ao alterar foto", f"{type(exc).__name__}: {exc}", "Confira a imagem, o grupo e as permissões do bot."),
             reply_markup=customize_keyboard(),
         )
+
+
+@router.message(F.new_chat_photo)
+async def tigrao_delete_photo_service_message(message: Message) -> None:
+    """Apaga a mensagem de serviço 'X mudou a foto do grupo' quando a mudança
+    foi disparada pelo próprio /tigrao recentemente. Silencioso, idempotente,
+    nunca propaga erro pra dispatcher."""
+    try:
+        chat_id = int(message.chat.id)
+        if not _consume_recent_photo_change(chat_id):
+            return
+        try:
+            await message.delete()
+            log_action(
+                chat_id=chat_id,
+                action="customize_photo_service_cleanup",
+                status="success",
+            )
+            logger.warning(
+                "TIGRAO_PHOTO_SERVICE_DELETED | chat_id=%s | msg_id=%s",
+                chat_id, message.message_id,
+            )
+        except (TelegramBadRequest, TelegramForbiddenError) as exc:
+            log_action(
+                chat_id=chat_id,
+                action="customize_photo_service_cleanup",
+                status="error",
+                error_type=type(exc).__name__,
+                error_message=str(exc)[:300],
+            )
+            logger.warning(
+                "TIGRAO_PHOTO_SERVICE_DELETE_FAILED | chat_id=%s | msg_id=%s | %s: %s",
+                chat_id, message.message_id, type(exc).__name__, exc,
+            )
+    except Exception:
+        logger.exception("TIGRAO_PHOTO_SERVICE_HANDLER_FAILED")
