@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=1080, initial-scale=1" />
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600;700;800;900&display=swap');
+
+    :root {
+      --bg: #0B0A1A;
+      --surface: #161329;
+      --surface-soft: #1C1A33;
+      --text: #F4F1FF;
+      --muted: #A8A3C6;
+      --blue: #5B9CFF;
+      --green: #3FE0A6;
+      --purple: #B58CFE;
+      --line: rgba(181,140,254,.28);
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 1080px;
+      font-family: Inter, "SF Pro Display", "Segoe UI", Arial, sans-serif;
+      color: var(--text);
+      background:
+        radial-gradient(ellipse 1100px 720px at 50% -4%, rgba(91,156,255,.18), transparent 70%),
+        radial-gradient(circle at 88% 18%, rgba(181,140,254,.12), transparent 50%),
+        radial-gradient(circle at 50% 108%, rgba(63,224,166,.12), transparent 50%),
+        var(--bg);
+      font-feature-settings: "lnum" 1, "tnum" 1;
+    }
+
+    .card {
+      width: 1080px;
+      padding: 64px 56px 80px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* HEADER */
+    .header {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 14px;
+    }
+    .brand {
+      font-family: Inter;
+      font-size: 40px;
+      font-weight: 800;
+      letter-spacing: -.02em;
+      color: var(--blue);
+    }
+    .brand .glyph { color: var(--green); margin-right: 12px; }
+    .count {
+      font-family: 'Bebas Neue', Inter, sans-serif;
+      font-size: 56px;
+      letter-spacing: .03em;
+      color: var(--purple);
+    }
+    .count .num { color: var(--green); margin-right: 12px; }
+
+    .period {
+      margin-bottom: 48px;
+    }
+    .period .label {
+      display: block;
+      font-family: Inter;
+      font-size: 30px;
+      font-weight: 700;
+      letter-spacing: .22em;
+      text-transform: uppercase;
+      color: var(--purple);
+      margin-bottom: 8px;
+    }
+    .period .value {
+      font-family: 'Bebas Neue', Inter, sans-serif;
+      font-size: 132px;
+      line-height: .92;
+      letter-spacing: .005em;
+      color: var(--text);
+      text-transform: uppercase;
+    }
+
+    /* GRID */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat({{ columns }}, 1fr);
+      gap: 28px;
+    }
+    .tile {
+      display: flex;
+      flex-direction: column;
+      background: var(--surface);
+      border-radius: 22px;
+      overflow: hidden;
+      box-shadow: 0 18px 48px rgba(0,0,0,.35);
+    }
+    .tile .cover-wrap {
+      position: relative;
+      width: 100%;
+      aspect-ratio: 1 / 1;
+      background: var(--surface-soft);
+    }
+    .tile .cover {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+    .tile .badge {
+      position: absolute;
+      top: 12px;
+      left: 12px;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 20px;
+      font-weight: 800;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+      backdrop-filter: blur(6px);
+      background: rgba(11,10,26,.55);
+      color: var(--green);
+    }
+    .tile .info {
+      padding: 18px 20px 22px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      min-height: 0;
+    }
+    .tile .who {
+      font-size: 26px;
+      font-weight: 800;
+      letter-spacing: -.01em;
+      color: var(--blue);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .tile .track {
+      font-size: 24px;
+      font-weight: 700;
+      line-height: 1.18;
+      color: var(--text);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .tile .artist {
+      font-size: 20px;
+      font-weight: 500;
+      font-style: italic;
+      color: var(--muted);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .footer {
+      margin-top: 48px;
+      padding-top: 24px;
+      border-top: 1px solid var(--line);
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      font-size: 22px;
+      color: var(--muted);
+      letter-spacing: .14em;
+      text-transform: uppercase;
+      font-weight: 700;
+    }
+    .footer .stamp { color: var(--purple); }
+  </style>
+</head>
+<body>
+  <main class="card">
+    <header class="header">
+      <div class="brand"><span class="glyph">♫</span>tigraoRADIO</div>
+      <div class="count"><span class="num">{{ count }}</span>ouvindo</div>
+    </header>
+
+    <div class="period">
+      <span class="label">Tocando agora</span>
+      <span class="value">{{ stamp_value }}</span>
+    </div>
+
+    <section class="grid">
+      {{ tiles }}
+    </section>
+
+    <footer class="footer">
+      <div>♫ tigraoRADIO • /tnow</div>
+      <div class="stamp">{{ stamp_iso }}</div>
+    </footer>
+  </main>
+</body>
+</html>

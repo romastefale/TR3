@@ -176,7 +176,14 @@ class SpotifyService:
             data = response.json()
             item = data.get("item")
             if item:
-                return self._map_track(item, source="spotify_current", played_at=None)
+                mapped = self._map_track(item, source="spotify_current", played_at=None)
+                if mapped is not None:
+                    # Spotify pode responder 200 com is_playing=false quando o
+                    # usuário pausou. Propagamos a flag (default True quando
+                    # ausente, preservando o comportamento legado) para que
+                    # consumidores como /tnow possam filtrar pausados.
+                    mapped["is_playing"] = bool(data.get("is_playing", True))
+                return mapped
 
         recent = await fetch_recent(token.access_token)
         if recent.status_code == 401:

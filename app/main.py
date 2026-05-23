@@ -10,6 +10,7 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 
 from app.bot.monthfm import monthfm as monthfm_command, router as monthfm_router
+from app.bot.tnow import router as tnow_router
 from app.bot.weekfm import router as weekfm_router, weekfm as weekfm_command
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
 from app.bot.tigraoresponde import handle_tigraoresponde_update
@@ -311,6 +312,7 @@ async def on_startup() -> None:
             dispatcher.include_router(tigrao_router)
             dispatcher.include_router(monthfm_router)
             dispatcher.include_router(weekfm_router)
+            dispatcher.include_router(tnow_router)
             dispatcher.include_router(btb_router)
             _register_handlers(dispatcher)
             _telegram_dispatcher_configured = True
