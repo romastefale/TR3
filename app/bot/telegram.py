@@ -259,18 +259,28 @@ def _register_handlers(dp: Dispatcher) -> None:
                 )
             return
         try:
-            username = await lastfm_service.set_username(message.from_user.id, parts[1])
+            username, previous = await lastfm_service.set_username(message.from_user.id, parts[1])
         except ValueError:
             await message.answer(f"{mention}, username Last.fm inválido.", parse_mode="HTML")
             return
+        if previous and previous.lower() == username.lower():
+            head = f"{mention}, Last.fm reconfirmado: <b>@{html.escape(username)}</b>."
+        elif previous:
+            head = (
+                f"{mention}, atualizei seu Last.fm de <b>@{html.escape(previous)}</b> "
+                f"pra <b>@{html.escape(username)}</b>."
+            )
+        else:
+            head = f"{mention}, Last.fm conectado: <b>@{html.escape(username)}</b>."
         if not LASTFM_API_KEY:
             await message.answer(
-                f"{mention}, Last.fm salvo: @{html.escape(username)}\n\n"
-                "A leitura do Last.fm precisa da variável LASTFM_API_KEY no Railway. Enquanto ela não existir, o bot continua usando Spotify como fallback.",
+                f"{head}\n\n"
+                "A leitura do Last.fm precisa da variável LASTFM_API_KEY no Railway. "
+                "Enquanto ela não existir, o bot continua usando Spotify como fallback.",
                 parse_mode="HTML",
             )
             return
-        await message.answer(f"{mention}, Last.fm salvo: @{html.escape(username)}", parse_mode="HTML")
+        await message.answer(head, parse_mode="HTML")
 
     @dp.message(Command("lastfmoff"))
     async def lastfmoff(message: Message) -> None:

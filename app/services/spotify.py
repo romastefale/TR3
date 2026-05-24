@@ -64,7 +64,13 @@ class SpotifyService:
         except ValueError:
             return None
 
-    async def exchange_code_for_token(self, code: str, user_id: int) -> None:
+    async def exchange_code_for_token(self, code: str, user_id: int) -> bool | None:
+        """Troca `code` por tokens e salva. Retorna:
+
+        * `True`  — substituiu um login anterior do mesmo user_id
+        * `False` — primeira conexão
+        * `None`  — Spotify devolveu resposta inválida (nada foi gravado)
+        """
         auth_str = f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}"
         b64_auth = base64.b64encode(auth_str.encode()).decode()
 
@@ -89,12 +95,14 @@ class SpotifyService:
 
         if not access_token or not expires_in:
             logger.error("Invalid Spotify token response: %s", data)
-            return
+            return None
 
         expiration = datetime.utcnow() + timedelta(seconds=int(expires_in))
+        replaced = False
         with SessionLocal() as db:
             existing = db.query(SpotifyToken).filter_by(user_id=user_id).first()
             if existing:
+                replaced = True
                 existing.access_token = access_token
                 existing.expiration = expiration
                 if refresh_token:
@@ -109,6 +117,7 @@ class SpotifyService:
                     )
                 )
             db.commit()
+        return replaced
 
     async def _refresh_token(self, user_id: int) -> SpotifyToken | None:
         with SessionLocal() as db:

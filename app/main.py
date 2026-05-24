@@ -352,12 +352,29 @@ async def spotify_callback(code: str, state: str) -> dict[str, str]:
         logger.error("INVALID STATE")
         return {"status": "error", "message": "Invalid state. Use /login novamente."}
     try:
-        await spotify_service.exchange_code_for_token(code, user_id)
+        replaced = await spotify_service.exchange_code_for_token(code, user_id)
         logger.error("TOKEN FLOW COMPLETED")
     except Exception as e:
         logger.error("TOKEN FLOW FAILED: %s", e)
         raise
-    return {"status": "ok", "message": "Spotify conectado com sucesso!"}
+    # Avisa no privado do user se substituiu um login antigo ou se é a 1ª vez.
+    if replaced is not None and bot is not None:
+        try:
+            if replaced:
+                msg = (
+                    "✓ Spotify <b>atualizado</b> — substituí seu login anterior "
+                    "pela nova autorização."
+                )
+            else:
+                msg = "✓ Spotify <b>conectado</b> com sucesso."
+            await bot.send_message(chat_id=user_id, text=msg, parse_mode="HTML")
+        except Exception:
+            logger.exception("SPOTIFY_CALLBACK_NOTIFY_FAILED user_id=%s", user_id)
+    if replaced is True:
+        return {"status": "ok", "message": "Spotify atualizado — login anterior substituído."}
+    if replaced is False:
+        return {"status": "ok", "message": "Spotify conectado com sucesso!"}
+    return {"status": "error", "message": "Falha ao conectar com Spotify. Tente /login de novo."}
 
 
 @app.get("/spotify/track")

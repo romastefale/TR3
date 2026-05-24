@@ -92,18 +92,25 @@ def _safe_int(value: Any) -> int | None:
 
 
 class LastfmService:
-    async def set_username(self, user_id: int, username: str) -> str:
+    async def set_username(self, user_id: int, username: str) -> tuple[str, str | None]:
+        """Salva (ou substitui) o Last.fm do usuário.
+
+        Devolve `(novo_username, username_anterior_ou_None)` pra que o handler
+        possa avisar quando substituiu uma conexão antiga.
+        """
         clean = _clean_username(username)
         now = datetime.utcnow()
+        previous: str | None = None
         with SessionLocal() as db:
             existing = db.query(LastfmProfile).filter_by(user_id=user_id).first()
             if existing:
+                previous = existing.username
                 existing.username = clean
                 existing.updated_at = now
             else:
                 db.add(LastfmProfile(user_id=user_id, username=clean, created_at=now, updated_at=now))
             db.commit()
-        return clean
+        return clean, previous
 
     async def clear_username(self, user_id: int) -> bool:
         with SessionLocal() as db:
