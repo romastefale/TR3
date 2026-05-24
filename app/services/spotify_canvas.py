@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
+import time
 
 import httpx
 
@@ -11,6 +13,16 @@ from app.config.settings import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Token anônimo do web player dura ~1h; usamos 50min p/ margem de segurança.
+CANVAS_TOKEN_TTL_SECONDS = 50 * 60
+# Canvas URL pra um track muda raramente; 24h de cache reduz drasticamente
+# o tráfego pro canvaz-cache mas ainda permite refresh diário.
+CANVAS_URL_CACHE_TTL_SECONDS = 24 * 3600
+# Canvas é vertical 720x1280 H.264, raramente passa de 2MB. 8MB já é teto
+# bem folgado — qualquer coisa maior é provavelmente bug e a gente aborta.
+CANVAS_DOWNLOAD_MAX_BYTES = 8 * 1024 * 1024
+CANVAS_DOWNLOAD_TIMEOUT_SECONDS = 10.0
 
 CANVAS_TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
 CANVAS_API_URL = "https://spclient.wg.spotify.com/canvaz-cache/v0/canvases"
@@ -119,6 +131,16 @@ def _find_canvas_url(data: bytes) -> str | None:
 
 
 class SpotifyCanvasService:
+    def __init__(self) -> None:
+        # Cache do token anônimo (compartilhado entre requests).
+        self._token: str | None = None
+        self._token_expires_at: float = 0.0
+        self._token_lock = asyncio.Lock()
+        # Cache de URL por track_id; armazena `None` como cache negativo pra
+        # não martelar o canvaz-cache em músicas que sabidamente não têm Canvas.
+        self._url_cache: dict[str, tuple[str | None, float]] = {}
+        self._url_lock = asyncio.Lock()
+
     async def get_canvas_url(self, track_id: str) -> str | None:
         clean_track_id = (track_id or "").strip()
         if not SPOTIFY_CANVAS_ENABLED:
@@ -128,22 +150,89 @@ class SpotifyCanvasService:
             logger.info("Spotify Canvas skipped: empty track_id")
             return None
 
-        try:
-            access_token = await self._get_access_token()
-            if not access_token:
-                logger.warning("Spotify Canvas skipped: token unavailable")
+        # Fast path: cache hit sem lock.
+        now = time.time()
+        cached = self._url_cache.get(clean_track_id)
+        if cached is not None and now < cached[1]:
+            return cached[0]
+
+        # Slow path: re-check sob lock pra não duplicar fetch.
+        async with self._url_lock:
+            now = time.time()
+            cached = self._url_cache.get(clean_track_id)
+            if cached is not None and now < cached[1]:
+                return cached[0]
+            try:
+                access_token = await self._get_access_token()
+                if not access_token:
+                    logger.warning("Spotify Canvas skipped: token unavailable")
+                    # NÃO cacheia falha de token (problema transitório).
+                    return None
+                canvas_url = await self._fetch_canvas_url(clean_track_id, access_token)
+                if canvas_url:
+                    logger.info("Spotify Canvas found: track_id=%s", clean_track_id)
+                else:
+                    logger.info("Spotify Canvas not found: track_id=%s", clean_track_id)
+                # Cacheia resultado (positivo OU negativo) com TTL.
+                self._url_cache[clean_track_id] = (canvas_url, now + CANVAS_URL_CACHE_TTL_SECONDS)
+                return canvas_url
+            except Exception:
+                logger.exception("Spotify Canvas lookup failed: track_id=%s", clean_track_id)
                 return None
-            canvas_url = await self._fetch_canvas_url(clean_track_id, access_token)
-            if canvas_url:
-                logger.info("Spotify Canvas found: track_id=%s", clean_track_id)
-            else:
-                logger.info("Spotify Canvas not found: track_id=%s", clean_track_id)
-            return canvas_url
+
+    async def download_canvas_bytes(self, url: str) -> bytes | None:
+        """Baixa o vídeo Canvas pra memória, com teto de tamanho.
+
+        Só aceita URLs do domínio oficial `canvaz.scdn.co` (SSRF guard).
+        Retorna `None` em qualquer falha — chamador deve cair pro fallback.
+        """
+        if not url or not url.startswith("https://canvaz.scdn.co/"):
+            logger.warning("Canvas download rejected: bad url=%s", url[:120] if url else None)
+            return None
+        try:
+            async with httpx.AsyncClient(
+                timeout=CANVAS_DOWNLOAD_TIMEOUT_SECONDS, follow_redirects=True
+            ) as client:
+                async with client.stream("GET", url) as response:
+                    if response.status_code != 200:
+                        logger.warning(
+                            "Canvas download failed: status=%s url=%s", response.status_code, url
+                        )
+                        return None
+                    chunks: list[bytes] = []
+                    total = 0
+                    async for chunk in response.aiter_bytes():
+                        total += len(chunk)
+                        if total > CANVAS_DOWNLOAD_MAX_BYTES:
+                            logger.warning(
+                                "Canvas download aborted: oversize (>%s bytes) url=%s",
+                                CANVAS_DOWNLOAD_MAX_BYTES,
+                                url,
+                            )
+                            return None
+                        chunks.append(chunk)
+                    return b"".join(chunks)
         except Exception:
-            logger.exception("Spotify Canvas lookup failed: track_id=%s", clean_track_id)
+            logger.exception("Canvas download error url=%s", url)
             return None
 
     async def _get_access_token(self) -> str | None:
+        # Fast path: token em cache e ainda válido.
+        now = time.time()
+        if self._token and now < self._token_expires_at:
+            return self._token
+        async with self._token_lock:
+            # Re-check sob lock.
+            now = time.time()
+            if self._token and now < self._token_expires_at:
+                return self._token
+            token = await self._fetch_access_token()
+            if token:
+                self._token = token
+                self._token_expires_at = now + CANVAS_TOKEN_TTL_SECONDS
+            return token
+
+    async def _fetch_access_token(self) -> str | None:
         async with httpx.AsyncClient(timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS, follow_redirects=True) as client:
             response = await client.get(CANVAS_TOKEN_URL, headers=TOKEN_HEADERS)
         if response.status_code != 200:

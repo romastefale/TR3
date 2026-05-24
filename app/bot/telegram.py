@@ -107,24 +107,21 @@ async def _resolve_play_button_count(user_id: int, track_id: str, artist: str | 
     return await likes_service.get_track_play_count(track_id), "local"
 
 
-async def _send_playing(message: Message) -> None:
-    if not message.from_user:
-        return
-    user_id = message.from_user.id
-    if not is_user_connected(user_id):
-        await message.answer(connect_hint_for(message.chat.type), parse_mode="HTML", disable_web_page_preview=True)
-        return
-    track = await music_service.get_current_or_last_played(user_id)
-    if not track:
-        await message.answer(
-            "Nada está tocando agora. Bota algo pra rolar no Spotify ou Last.fm e tenta de novo.",
-        )
-        return
+async def build_playing_payload(
+    message: Message, track: dict
+) -> tuple[str, str, str | None, InlineKeyboardMarkup] | None:
+    """Registra o play e monta (track_id, caption HTML, cover_url, keyboard).
 
+    Side effect: chama `likes_service.register_play`. Retorna `None` se faltar
+    `from_user` ou `track_id`. Reaproveitado por /playing e /tcanvas pra
+    garantir mesma legenda + mesmos botões.
+    """
+    if not message.from_user:
+        return None
+    user_id = message.from_user.id
     track_id = str(track.get("track_id") or "").strip()
     if not track_id:
-        await message.answer("Erro ao identificar a música.")
-        return
+        return None
 
     track_name_raw = str(track.get("track_name") or "").strip()
     artist_raw = str(track.get("artist") or "").strip()
@@ -144,6 +141,28 @@ async def _send_playing(message: Message) -> None:
         f"♫ <b>{track_part}</b> — <i>{artist}</i>"
     )
     keyboard = _playing_keyboard(track_id, user_id, total_plays, total_likes, liked, plays_source)
+    return track_id, caption, cover, keyboard
+
+
+async def _send_playing(message: Message) -> None:
+    if not message.from_user:
+        return
+    user_id = message.from_user.id
+    if not is_user_connected(user_id):
+        await message.answer(connect_hint_for(message.chat.type), parse_mode="HTML", disable_web_page_preview=True)
+        return
+    track = await music_service.get_current_or_last_played(user_id)
+    if not track:
+        await message.answer(
+            "Nada está tocando agora. Bota algo pra rolar no Spotify ou Last.fm e tenta de novo.",
+        )
+        return
+
+    payload = await build_playing_payload(message, track)
+    if not payload:
+        await message.answer("Erro ao identificar a música.")
+        return
+    _track_id, caption, cover, keyboard = payload
 
     if cover:
         await message.answer_photo(photo=cover, caption=caption, parse_mode="HTML", reply_markup=keyboard)

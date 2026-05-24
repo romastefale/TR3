@@ -1,0 +1,81 @@
+"""/tcanvas — manda o Spotify Canvas (vídeo curto vertical) da música atual.
+
+Mesma legenda e botões do /playing. Se a música não tiver Canvas (ou o
+download falhar), cai SILENCIOSAMENTE no fluxo do /playing — o user sempre
+recebe alguma coisa útil.
+
+Abordagem: usa o endpoint não-documentado `spclient.wg.spotify.com/canvaz-cache`
+com um Bearer token anônimo do web player (`open.spotify.com/get_access_token`).
+Não envolve OAuth do usuário. Mesma técnica usada por canvasdownloader.com e
+github.com/bartleyg/my-spotify-canvas.
+"""
+from __future__ import annotations
+
+import logging
+
+from aiogram import Router
+from aiogram.filters import Command
+from aiogram.types import BufferedInputFile, Message
+
+from app.bot.telegram import build_playing_payload
+from app.services.connection_check import connect_hint_for, is_user_connected
+from app.services.music import music_service
+from app.services.spotify_canvas import spotify_canvas_service
+
+logger = logging.getLogger(__name__)
+router = Router()
+
+
+async def _send_fallback(message: Message, caption: str, cover: str | None, keyboard) -> None:
+    """Fallback silencioso: mesmo resultado do /playing normal."""
+    if cover:
+        await message.answer_photo(photo=cover, caption=caption, parse_mode="HTML", reply_markup=keyboard)
+    else:
+        await message.answer(caption, parse_mode="HTML", reply_markup=keyboard)
+
+
+@router.message(Command("tcanvas"))
+async def tcanvas(message: Message) -> None:
+    if not message.from_user:
+        return
+    if not is_user_connected(message.from_user.id):
+        await message.answer(
+            connect_hint_for(message.chat.type), parse_mode="HTML", disable_web_page_preview=True
+        )
+        return
+
+    track = await music_service.get_current_or_last_played(message.from_user.id)
+    if not track:
+        await message.answer(
+            "Nada está tocando agora. Bota algo pra rolar no Spotify ou Last.fm e tenta de novo."
+        )
+        return
+
+    payload = await build_playing_payload(message, track)
+    if not payload:
+        await message.answer("Erro ao identificar a música.")
+        return
+    track_id, caption, cover, keyboard = payload
+
+    canvas_url = await spotify_canvas_service.get_canvas_url(track_id)
+    if not canvas_url:
+        logger.info("TCANVAS_NO_CANVAS track_id=%s", track_id)
+        await _send_fallback(message, caption, cover, keyboard)
+        return
+
+    canvas_bytes = await spotify_canvas_service.download_canvas_bytes(canvas_url)
+    if not canvas_bytes:
+        logger.info("TCANVAS_DOWNLOAD_FAILED track_id=%s", track_id)
+        await _send_fallback(message, caption, cover, keyboard)
+        return
+
+    try:
+        await message.answer_video(
+            video=BufferedInputFile(canvas_bytes, filename=f"canvas-{track_id}.mp4"),
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=keyboard,
+        )
+    except Exception:
+        logger.exception("TCANVAS_SEND_FAILED track_id=%s", track_id)
+        await _send_fallback(message, caption, cover, keyboard)
