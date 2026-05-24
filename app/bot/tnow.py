@@ -2,15 +2,18 @@
 
 Critérios:
 - Considera todo user_id presente em `spotify_tokens` OU `lastfm_profiles`.
+- Quando rodado em grupo/supergrupo, restringe ao subconjunto que é membro
+  ATIVO daquele chat (status != "left"/"kicked"). Em DM/privado, lista
+  todos os cadastrados.
 - Mantém SOMENTE quem está com música em reprodução neste exato momento
-  (Spotify currently-playing == 200 OR Last.fm @attr.nowplaying == true).
-- Quem pausou / parou é ignorado (a ideia é simular "todo mundo mandou ao
-  mesmo tempo a mensagem da sua música").
-- Por mensagem do usuário, /tnow é aberto a qualquer chat e qualquer membro.
+  (Spotify currently-playing == 200 AND is_playing=true, OU Last.fm
+  @attr.nowplaying == true).
+- Quem pausou / parou é ignorado.
 
 Privacidade: o pré-requisito p/ aparecer é o usuário ter conectado
 voluntariamente Spotify ou Last.fm ao bot, então o card só revela o que
-ele já consentiu em expor por meio dos comandos individuais.
+ele já consentiu em expor por meio dos comandos individuais. Em grupo,
+o filtro de membership garante que ninguém de fora apareça no mosaico.
 """
 from __future__ import annotations
 
@@ -21,8 +24,9 @@ from typing import Any
 
 import httpx
 from aiogram import Router
+from aiogram.enums import ChatType
 from aiogram.filters import Command
-from aiogram.types import BufferedInputFile, Message
+from aiogram.types import BufferedInputFile, Chat, Message
 from sqlalchemy import select
 
 from app.config.settings import HTTP_TIMEOUT_SECONDS
@@ -126,10 +130,47 @@ async def _build_entry(bot: Any, user_id: int) -> TnowEntry | None:
     )
 
 
-async def _gather_entries(bot: Any) -> list[TnowEntry]:
+_GROUP_TYPES = {ChatType.GROUP, ChatType.SUPERGROUP}
+_MEMBER_OUT_STATUSES = {"left", "kicked"}
+
+
+async def _is_chat_member(bot: Any, chat_id: int, user_id: int) -> bool:
+    """True se o usuário é membro ativo do chat. Erros (ex.: bot sem
+    permissão de admin pra consultar) caem em False — preferimos esconder
+    do que vazar alguém que talvez não esteja mais no grupo."""
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        status = getattr(member, "status", None)
+        status_value = getattr(status, "value", status)
+        return str(status_value) not in _MEMBER_OUT_STATUSES
+    except Exception:
+        logger.debug(
+            "TNOW_GET_CHAT_MEMBER_FAILED | chat_id=%s | user_id=%s",
+            chat_id, user_id, exc_info=True,
+        )
+        return False
+
+
+async def _filter_to_group_members(bot: Any, chat_id: int, user_ids: list[int]) -> list[int]:
+    if not user_ids:
+        return []
+    checks = await asyncio.gather(
+        *[_is_chat_member(bot, chat_id, uid) for uid in user_ids],
+        return_exceptions=False,
+    )
+    return [uid for uid, ok in zip(user_ids, checks) if ok]
+
+
+async def _gather_entries(bot: Any, chat: Chat | None = None) -> list[TnowEntry]:
     user_ids = _registered_user_ids()
     if not user_ids:
         return []
+    # Em grupo/supergrupo: corta cedo todo mundo que não é membro daquele
+    # chat antes de bater nas APIs do Spotify/Last.fm.
+    if chat is not None and chat.type in _GROUP_TYPES:
+        user_ids = await _filter_to_group_members(bot, chat.id, user_ids)
+        if not user_ids:
+            return []
     tasks = [asyncio.create_task(_build_entry(bot, uid)) for uid in user_ids]
     results = await asyncio.gather(*tasks, return_exceptions=True)
     entries: list[TnowEntry] = []

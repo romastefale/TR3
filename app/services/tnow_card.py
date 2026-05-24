@@ -67,15 +67,17 @@ def _cover_data_uri(raw: bytes | None, *, max_dim: int = 480) -> str | None:
 
 
 def _columns_for(n: int) -> int:
+    """Grid inteligente: aproxima ceil(sqrt(n)) p/ manter o mosaico quadrado,
+    com casos especiais p/ n pequeno onde uma única fileira lê melhor (3, 5)
+    e cap em 6 colunas p/ não espremer demais as capas."""
+    import math
     if n <= 1:
         return 1
-    if n <= 4:
-        return 2
-    if n <= 9:
-        return 3
-    if n <= 16:
-        return 4
-    return 5
+    if n == 3:
+        return 3  # 1 fileira de 3 > 2+1
+    if n == 5:
+        return 5  # 1 fileira de 5 > 3+2 com capa solitária na 2ª linha
+    return min(6, max(2, math.ceil(math.sqrt(n))))
 
 
 def _tile_html(entry: TnowEntry) -> str:
