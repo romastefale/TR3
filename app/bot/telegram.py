@@ -16,7 +16,7 @@ from aiogram.types import (
 )
 
 from app.bot.intent import detect_intent
-from app.config.settings import LASTFM_API_KEY
+from app.config.settings import LASTFM_API_KEY, OWNER_ID
 from app.services.connection_check import connect_hint_for, is_user_connected
 from app.services.lastfm import lastfm_service
 from app.services.likes import likes_service
@@ -281,6 +281,59 @@ def _register_handlers(dp: Dispatcher) -> None:
             )
             return
         await message.answer(head, parse_mode="HTML")
+
+    @dp.message(Command("manual"))
+    async def manual(message: Message) -> None:
+        # Comando de dono: cadastra outra pessoa no Last.fm.
+        # Sem hipótese: só o OWNER_ID pode rodar; qualquer outro é ignorado em silêncio.
+        if not message.from_user or message.from_user.id != OWNER_ID:
+            return
+        parts = (message.text or "").split()
+        if len(parts) < 3:
+            await message.answer(
+                "Uso: <code>/manual &lt;user_id&gt; &lt;lastfm_username&gt;</code>\n"
+                "Aceita @, URL completa do Last.fm ou só o nome.\n"
+                "Exemplo: <code>/manual 123456789 @romastefale</code>",
+                parse_mode="HTML",
+            )
+            return
+        raw_uid = parts[1].strip()
+        try:
+            target_uid = int(raw_uid)
+        except ValueError:
+            await message.answer(
+                f"❌ <code>{html.escape(raw_uid)}</code> não é um Telegram user_id válido.",
+                parse_mode="HTML",
+            )
+            return
+        raw_username = " ".join(parts[2:]).strip()
+        try:
+            clean, deleted = await lastfm_service.manual_register(target_uid, raw_username)
+        except ValueError:
+            await message.answer(
+                f"❌ Username Last.fm inválido: <code>{html.escape(raw_username)}</code>",
+                parse_mode="HTML",
+            )
+            return
+        except Exception:
+            logger.exception("MANUAL_REGISTER_FAILED user_id=%s raw=%r", target_uid, raw_username)
+            await message.answer(
+                "❌ Erro ao cadastrar — nada foi alterado no banco (transação revertida).",
+                parse_mode="HTML",
+            )
+            return
+        cleanup_line = (
+            f"🧹 Limpei {deleted} registro(s) antigo(s) desse user_id antes."
+            if deleted
+            else "🧹 Nenhuma sujeira antiga — slot estava limpo."
+        )
+        await message.answer(
+            "✓ Cadastro manual concluído.\n"
+            f"• user_id: <code>{target_uid}</code>\n"
+            f"• Last.fm: <b>@{html.escape(clean)}</b>\n"
+            f"{cleanup_line}",
+            parse_mode="HTML",
+        )
 
     @dp.message(Command("lastfmoff"))
     async def lastfmoff(message: Message) -> None:

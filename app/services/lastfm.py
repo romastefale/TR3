@@ -112,6 +112,33 @@ class LastfmService:
             db.commit()
         return clean, previous
 
+    async def manual_register(self, user_id: int, username: str) -> tuple[str, int]:
+        """Cadastro manual (admin) do Last.fm de um terceiro.
+
+        Apaga TODAS as linhas de `lastfm_profiles` daquele `user_id` (defesa
+        em profundidade contra qualquer sujeira de tentativa anterior) e
+        cria uma linha nova. Tudo numa única transação — ou tudo entra ou
+        nada muda.
+
+        Retorna `(novo_username, qtd_de_linhas_apagadas)`.
+        """
+        clean = _clean_username(username)
+        now = datetime.utcnow()
+        with SessionLocal() as db:
+            deleted = (
+                db.query(LastfmProfile).filter_by(user_id=user_id).delete(synchronize_session=False)
+            )
+            db.add(
+                LastfmProfile(
+                    user_id=user_id,
+                    username=clean,
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+            db.commit()
+        return clean, int(deleted or 0)
+
     async def clear_username(self, user_id: int) -> bool:
         with SessionLocal() as db:
             profile = db.query(LastfmProfile).filter_by(user_id=user_id).first()
