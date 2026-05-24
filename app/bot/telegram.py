@@ -194,11 +194,27 @@ def _register_handlers(dp: Dispatcher) -> None:
     @dp.message(Command("login"))
     async def login(message: Message) -> None:
         if message.chat.type != "private":
-            await message.answer("🔒 Use /login no privado para conectar seu Spotify.")
+            await message.answer(
+                "🔒 Pra conectar suas contas, fala comigo no privado:\n"
+                "1) <code>/login</code> — autoriza o Spotify\n"
+                "2) <code>/lastfm seu_username</code> (sem o @) — conecta o Last.fm\n\n"
+                "Sem isso você não aparece no /tnow nem usa /monthfm, /weekfm e cia.",
+                parse_mode="HTML",
+            )
             return
         if not message.from_user:
             return
-        await message.answer(f"Authorize Spotify access: {spotify_service.build_auth_url(message.from_user.id)}")
+        auth_url = spotify_service.build_auth_url(message.from_user.id)
+        await message.answer(
+            "🎧 <b>Conectando suas contas no tigraoRADIO</b>\n\n"
+            f"1) <b>Spotify</b> — abre este link e autoriza:\n{auth_url}\n\n"
+            "2) <b>Last.fm</b> — manda aqui:\n"
+            "<code>/lastfm seu_username</code>  (sem o @)\n\n"
+            "Só depois desses dois passos seu nome entra no /tnow e os comandos "
+            "/monthfm, /weekfm, /playing funcionam pra você.",
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
 
     @dp.message(Command("logout"))
     async def logout(message: Message) -> None:
