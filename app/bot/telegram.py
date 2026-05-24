@@ -218,7 +218,10 @@ def _register_handlers(dp: Dispatcher) -> None:
             if current:
                 await message.answer(f"{mention}, seu Last.fm salvo é @{html.escape(current)}.", parse_mode="HTML")
             else:
-                await message.answer(f"{mention}, use: /lastfm <username>", parse_mode="HTML")
+                await message.answer(
+                    f"{mention}, use: <code>/lastfm seu_username</code> (sem o @).",
+                    parse_mode="HTML",
+                )
             return
         try:
             username = await lastfm_service.set_username(message.from_user.id, parts[1])

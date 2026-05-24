@@ -391,7 +391,10 @@ class LastfmCapsuleService:
     async def build_capsule(self, user_id: int, display_name: str, raw_month: str | None = None) -> CapsuleResult:
         username = await lastfm_service.get_username(user_id)
         if not username:
-            return CapsuleResult("Use /lastfm <username> antes de gerar a cápsula mensal.")
+            return CapsuleResult(
+                "Você ainda não conectou um Last.fm. "
+                "Use <code>/lastfm seu_username</code> (sem o @) antes de gerar a cápsula mensal."
+            )
         if not LASTFM_API_KEY:
             return CapsuleResult("LASTFM_API_KEY ausente no Railway. Não consigo consultar o Last.fm.")
 
