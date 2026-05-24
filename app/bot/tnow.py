@@ -233,5 +233,11 @@ async def _finish_tnow(status: Message) -> None:
 async def tnow(message: Message) -> None:
     if not message.from_user:
         return
+    # Quem manda /tnow sem ter conectado nada não vai aparecer no próprio
+    # mosaico — orienta antes pra evitar confusão. Não bloqueia o comando:
+    # ele segue mostrando quem mais tá ouvindo.
+    from app.services.connection_check import connect_hint_for, is_user_connected
+    if not is_user_connected(message.from_user.id):
+        await message.answer(connect_hint_for(message.chat.type), parse_mode="HTML", disable_web_page_preview=True)
     status = await message.answer("Vendo quem tá ouvindo o quê agora...")
     asyncio.create_task(_finish_tnow(status))

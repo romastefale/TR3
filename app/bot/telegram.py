@@ -17,6 +17,7 @@ from aiogram.types import (
 
 from app.bot.intent import detect_intent
 from app.config.settings import LASTFM_API_KEY
+from app.services.connection_check import connect_hint_for, is_user_connected
 from app.services.lastfm import lastfm_service
 from app.services.likes import likes_service
 from app.services.music import music_service
@@ -110,9 +111,14 @@ async def _send_playing(message: Message) -> None:
     if not message.from_user:
         return
     user_id = message.from_user.id
+    if not is_user_connected(user_id):
+        await message.answer(connect_hint_for(message.chat.type), parse_mode="HTML", disable_web_page_preview=True)
+        return
     track = await music_service.get_current_or_last_played(user_id)
     if not track:
-        await message.answer("Nada está tocando agora. Use /login para Spotify ou /lastfm <username> para Last.fm.")
+        await message.answer(
+            "Nada está tocando agora. Bota algo pra rolar no Spotify ou Last.fm e tenta de novo.",
+        )
         return
 
     track_id = str(track.get("track_id") or "").strip()
@@ -284,6 +290,9 @@ def _register_handlers(dp: Dispatcher) -> None:
     @dp.message(Command("mood"))
     async def mood(message: Message) -> None:
         if not message.from_user:
+            return
+        if not is_user_connected(message.from_user.id):
+            await message.answer(connect_hint_for(message.chat.type), parse_mode="HTML", disable_web_page_preview=True)
             return
         parts = (message.text or "").split()
         if len(parts) < 2:

@@ -77,6 +77,10 @@ async def _finish_weekfm(message: Message, user_id: int, display_name: str, raw_
 async def weekfm(message: Message) -> None:
     if not message.from_user:
         return
+    from app.services.connection_check import connect_hint_for, is_user_connected
+    if not is_user_connected(message.from_user.id):
+        await message.answer(connect_hint_for(message.chat.type), parse_mode="HTML", disable_web_page_preview=True)
+        return
     parts = (message.text or "").split(maxsplit=1)
     raw_week = parts[1].strip() if len(parts) > 1 else None
     status = await message.answer("Gerando extrato da semana do Last.fm...")

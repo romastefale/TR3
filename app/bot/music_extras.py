@@ -119,6 +119,10 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
     async def albnow(message: Message) -> None:
         if not message.from_user:
             return
+        from app.services.connection_check import connect_hint_for, is_user_connected
+        if not is_user_connected(message.from_user.id):
+            await message.answer(connect_hint_for(message.chat.type), parse_mode="HTML", disable_web_page_preview=True)
+            return
         data = await spotify_service.get_current_or_last_played(message.from_user.id)
         if not data:
             await message.answer("Nada tocando agora.")
