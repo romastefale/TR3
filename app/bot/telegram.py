@@ -232,11 +232,24 @@ def _register_handlers(dp: Dispatcher) -> None:
         if len(parts) < 2:
             current = await lastfm_service.get_username(message.from_user.id)
             if current:
-                await message.answer(f"{mention}, seu Last.fm salvo é @{html.escape(current)}.", parse_mode="HTML")
+                await message.answer(
+                    f"{mention}, seu Last.fm salvo é <b>@{html.escape(current)}</b>.\n"
+                    "Pra trocar: <code>/lastfm outro_username</code> (sem o @).\n"
+                    "Pra desconectar: /lastfmoff",
+                    parse_mode="HTML",
+                )
             else:
                 await message.answer(
-                    f"{mention}, use: <code>/lastfm seu_username</code> (sem o @).",
+                    f"{mention}, você ainda não conectou um Last.fm.\n\n"
+                    "🎧 <b>Como conectar:</b>\n"
+                    "1) Abre seu perfil no Last.fm: https://www.last.fm/\n"
+                    "2) Copia só o <b>username</b> (o que vem depois de /user/, <b>sem o @</b>)\n"
+                    "3) Manda aqui: <code>/lastfm seu_username</code>\n\n"
+                    "Exemplo: se sua URL é <code>last.fm/user/romastefale</code>, "
+                    "manda <code>/lastfm romastefale</code>.\n\n"
+                    "Sem isso você não aparece no /tnow nem usa /monthfm e /weekfm.",
                     parse_mode="HTML",
+                    disable_web_page_preview=True,
                 )
             return
         try:
