@@ -190,6 +190,21 @@ class MonthfmCardData:
     album_count: int = 0
     total_scrobbles: int = 0
     minutes: int | None = None
+    # Quantidade de itens visíveis em CADA coluna (artistas e músicas).
+    # Padrão 5 mantém o card atual dos extratos individuais
+    # (/weekfm, /monthfm). O /songcharts (ranking de grupo) usa 10.
+    list_size: int = 5
+
+
+def _card_height_for(list_size: int) -> int:
+    """Altura do canvas ajustada à quantidade de linhas das colunas.
+
+    Para até 5 linhas mantém o canvas base (2000px). Acima disso, soma
+    70px por linha extra — suficiente pra acomodar passo de 64px no
+    fallback Pillow e ajuste de gap do flexbox no HTML.
+    """
+    extra = max(0, list_size - 5) * 70
+    return CARD_HEIGHT + extra
 
 
 def _escape(value: object) -> str:
@@ -206,10 +221,10 @@ def _row_number(index: int) -> str:
     return str(index)
 
 
-def _artist_rows(items: tuple[CardArtist, ...]) -> str:
+def _artist_rows(items: tuple[CardArtist, ...], list_size: int = 5) -> str:
     """Tamanho do nome é uniforme (definido no CSS .name) — sem shrink por linha."""
     rows: list[str] = []
-    for idx, item in enumerate(items[:5], 1):
+    for idx, item in enumerate(items[:list_size], 1):
         rows.append(
             "<div class=\"row\">"
             f"<div class=\"rank\">{_row_number(idx)}</div>"
@@ -217,7 +232,7 @@ def _artist_rows(items: tuple[CardArtist, ...]) -> str:
             f"<div class=\"count\">{_format_number(item.count)}</div>"
             "</div>"
         )
-    while len(rows) < 5:
+    while len(rows) < list_size:
         idx = len(rows) + 1
         rows.append(
             "<div class=\"row\">"
@@ -229,10 +244,10 @@ def _artist_rows(items: tuple[CardArtist, ...]) -> str:
     return "\n".join(rows)
 
 
-def _track_rows(items: tuple[CardTrack, ...]) -> str:
+def _track_rows(items: tuple[CardTrack, ...], list_size: int = 5) -> str:
     """Renderiza só nome da música. Tamanho uniforme via CSS .name."""
     rows: list[str] = []
-    for idx, item in enumerate(items[:5], 1):
+    for idx, item in enumerate(items[:list_size], 1):
         rows.append(
             "<div class=\"row\">"
             f"<div class=\"rank\">{_row_number(idx)}</div>"
@@ -240,7 +255,7 @@ def _track_rows(items: tuple[CardTrack, ...]) -> str:
             f"<div class=\"count\">{_format_number(item.plays)}</div>"
             "</div>"
         )
-    while len(rows) < 5:
+    while len(rows) < list_size:
         idx = len(rows) + 1
         rows.append(
             "<div class=\"row\">"
@@ -341,8 +356,9 @@ def build_monthfm_card_html(data: MonthfmCardData) -> str:
         "hero_track_font_size": str(_step_size(hero_track, HERO_TRACK_STEPS)),
         "hero_artist": _escape(hero_artist),
         "hero_plays": _format_number(hero_plays),
-        "artist_rows": _artist_rows(data.top_artists),
-        "track_rows": _track_rows(data.top_tracks),
+        "artist_rows": _artist_rows(data.top_artists, data.list_size),
+        "track_rows": _track_rows(data.top_tracks, data.list_size),
+        "card_height": str(_card_height_for(data.list_size)),
         "minutes": _format_number(data.minutes),
         "minutes_unit_scale": str(_minutes_unit_scale(_format_number(data.minutes))),
         # Accent dinâmico da capa.
@@ -397,11 +413,12 @@ def _render_pillow_card(data: MonthfmCardData) -> bytes | None:
         green = _hex_to_rgb(theme["green"])
         purple = _hex_to_rgb(theme["purple"])
 
-        image = Image.new("RGB", (CARD_WIDTH, CARD_HEIGHT), bg)
+        effective_height = _card_height_for(data.list_size)
+        image = Image.new("RGB", (CARD_WIDTH, effective_height), bg)
         draw = ImageDraw.Draw(image)
 
         # Subtle radial-ish glows using elliptical fills (approximation).
-        glow = Image.new("RGB", (CARD_WIDTH, CARD_HEIGHT), bg)
+        glow = Image.new("RGB", (CARD_WIDTH, effective_height), bg)
         glow_draw = ImageDraw.Draw(glow)
         glow_draw.ellipse((-220, -260, 560, 480), fill=(blue[0] // 4 + bg[0] // 2, blue[1] // 4 + bg[1] // 2, blue[2] // 4 + bg[2] // 2))
         glow_draw.ellipse((620, -200, 1320, 520), fill=(purple[0] // 4 + bg[0] // 2, purple[1] // 4 + bg[1] // 2, purple[2] // 4 + bg[2] // 2))
@@ -494,7 +511,7 @@ def _render_pillow_card(data: MonthfmCardData) -> bytes | None:
         draw.text((right_x, y), "♫  TOP MÚSICAS", font=section_font, fill=muted)
 
         row_y = y + 50
-        for idx in range(5):
+        for idx in range(data.list_size):
             item = data.top_artists[idx] if idx < len(data.top_artists) else None
             name = item.name if item else "—"
             count = item.count if item else 0
@@ -506,7 +523,7 @@ def _render_pillow_card(data: MonthfmCardData) -> bytes | None:
             row_y += 64
 
         row_y = y + 50
-        for idx in range(5):
+        for idx in range(data.list_size):
             item = data.top_tracks[idx] if idx < len(data.top_tracks) else None
             title = item.title if item else "—"
             artist = item.artist if item else "—"
@@ -520,7 +537,7 @@ def _render_pillow_card(data: MonthfmCardData) -> bytes | None:
             row_y += 64
 
         # Footer
-        footer_top = CARD_HEIGHT - 220
+        footer_top = effective_height - 220
         draw.line((x, footer_top, CARD_WIDTH - x, footer_top), fill=purple, width=2)
         minutes_text = _format_number(data.minutes)
         draw.text((x, footer_top + 24), minutes_text, font=minutes_font, fill=green)
@@ -559,7 +576,7 @@ async def render_monthfm_card(data: MonthfmCardData) -> bytes | None:
             # fontes 2x maiores via FONT_SCALE). Com DSF=2, físico = 2160x3800,
             # W+H=5960 dentro do limite Telegram (≤10000).
             page = await browser.new_page(
-                viewport={"width": CARD_WIDTH, "height": CARD_HEIGHT},
+                viewport={"width": CARD_WIDTH, "height": _card_height_for(data.list_size)},
                 device_scale_factor=2,
             )
             await page.set_content(html_content, wait_until="networkidle", timeout=20000)

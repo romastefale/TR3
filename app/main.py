@@ -10,6 +10,8 @@ from aiogram import Bot, Dispatcher
 from aiogram.types import Update
 
 from app.bot.monthfm import monthfm as monthfm_command, router as monthfm_router
+from app.bot.myself import router as myself_router
+from app.bot.songcharts import router as songcharts_router
 from app.bot.tcanvas import router as tcanvas_router
 from app.bot.tnow import router as tnow_router
 from app.bot.weekfm import router as weekfm_router, weekfm as weekfm_command
@@ -315,6 +317,8 @@ async def on_startup() -> None:
             dispatcher.include_router(weekfm_router)
             dispatcher.include_router(tnow_router)
             dispatcher.include_router(tcanvas_router)
+            dispatcher.include_router(myself_router)
+            dispatcher.include_router(songcharts_router)
             dispatcher.include_router(btb_router)
             _register_handlers(dispatcher)
             _telegram_dispatcher_configured = True

@@ -403,32 +403,11 @@ def _register_handlers(dp: Dispatcher) -> None:
         else:
             await message.answer(caption, parse_mode="HTML")
 
-    @dp.message(Command("myself"))
-    async def myself(message: Message) -> None:
-        if not message.from_user:
-            return
-        user_id = message.from_user.id
-        safe_name = html.escape(message.from_user.full_name or "Usuário")
-        total_likes = await likes_service.get_user_total_likes(user_id)
-        top_tracks = await likes_service.get_user_top_tracks(user_id, limit=5)
-        top_artists = await likes_service.get_user_top_artists(user_id, limit=5)
-        tracks = ["♫ Músicas"] + [f"♫ {i}. {name} — {plays}" for i, (name, plays) in enumerate(top_tracks, 1)]
-        artists = ["★ Artistas"] + [f"★ {i}. {name} — {plays}" for i, (name, plays) in enumerate(top_artists, 1)]
-        await message.answer(
-            f"<a href='tg://user?id={user_id}'>{safe_name}</a> · ♥ {total_likes} curtidas\n\n"
-            f"{chr(10).join(tracks)}\n\n{chr(10).join(artists)}",
-            parse_mode="HTML",
-        )
-
-    @dp.message(Command("songcharts"))
-    async def songcharts(message: Message) -> None:
-        top_tracks = await likes_service.get_top_tracks(limit=5)
-        top_artists = await likes_service.get_top_artists(limit=5)
-        liked = await likes_service.get_most_liked_tracks(limit=5)
-        tracks = ["♫ Músicas"] + [f"♫ {i}. {name} — {plays}" for i, (name, plays) in enumerate(top_tracks, 1)]
-        artists = ["★ Artistas"] + [f"★ {i}. {name} — {plays}" for i, (name, plays) in enumerate(top_artists, 1)]
-        likes = ["♥ Mais curtidas"] + [f"♥ {i}. {name} — {count}" for i, (name, count) in enumerate(liked, 1)]
-        await message.answer("♫ Ranking do grupo\n\n" + "\n\n".join(["\n".join(tracks), "\n".join(artists), "\n".join(likes)]))
+    # /myself e /songcharts foram movidos pra `app/bot/myself.py` e
+    # `app/bot/songcharts.py`. Os novos comandos usam Last.fm (em vez de
+    # likes locais) e renderizam o mesmo card visual dos /weekfm e
+    # /monthfm. O ranking de grupo (/songcharts) agrega todos os
+    # membros conectados e fixa a mensagem.
 
     @dp.callback_query(F.data.startswith("plays:"))
     async def plays_callback(query: CallbackQuery) -> None:

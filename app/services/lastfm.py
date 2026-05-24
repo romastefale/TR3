@@ -153,6 +153,25 @@ class LastfmService:
             profile = db.query(LastfmProfile).filter_by(user_id=user_id).first()
             return profile.username if profile else None
 
+    async def get_all_profiles(self) -> list[tuple[int, str]]:
+        """Lista todos os Last.fm conectados como tuplas (user_id, username).
+
+        Usado pelo ranking do grupo (`/songcharts`) pra enumerar a base e,
+        em seguida, filtrar por presença no chat (no fluxo do grupo) ou
+        agregar globalmente (no fluxo do owner em DM).
+        """
+        with SessionLocal() as db:
+            rows = (
+                db.query(LastfmProfile.user_id, LastfmProfile.username)
+                .order_by(LastfmProfile.user_id.asc())
+                .all()
+            )
+        return [
+            (int(user_id), str(username).strip())
+            for user_id, username in rows
+            if user_id is not None and username and str(username).strip()
+        ]
+
     async def get_user_track_playcount(self, user_id: int, artist: str, track_name: str) -> int | None:
         username = await self.get_username(user_id)
         if not username or not LASTFM_API_KEY or not artist.strip() or not track_name.strip():
