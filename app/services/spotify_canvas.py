@@ -9,6 +9,7 @@ import httpx
 
 from app.config.settings import (
     SPOTIFY_CANVAS_ENABLED,
+    SPOTIFY_CANVAS_SP_DC,
     SPOTIFY_CANVAS_TIMEOUT_SECONDS,
 )
 
@@ -24,7 +25,14 @@ CANVAS_URL_CACHE_TTL_SECONDS = 24 * 3600
 CANVAS_DOWNLOAD_MAX_BYTES = 8 * 1024 * 1024
 CANVAS_DOWNLOAD_TIMEOUT_SECONDS = 10.0
 
-CANVAS_TOKEN_URL = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
+# Endpoint anônimo do web player. Funciona de IPs residenciais; IPs de
+# datacenter (Railway, AWS etc) tipicamente recebem `403 URL Blocked` da
+# camada upstream (Cloudflare/Akamai) — daí a necessidade do sp_dc cookie.
+CANVAS_TOKEN_URL_ANON = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
+# Endpoint autenticado por cookie de sessão (sp_dc) — trata como browser
+# logado, atravessa o bloqueio de datacenter. Cookie dura ~1 ano; o token
+# derivado dura ~1h (já cacheado em memória).
+CANVAS_TOKEN_URL_COOKIE = "https://open.spotify.com/api/token?reason=transport&productType=web_player"
 CANVAS_API_URL = "https://spclient.wg.spotify.com/canvaz-cache/v0/canvases"
 CANVAS_URL_RE = re.compile(rb"https://canvaz\.scdn\.co/[^\x00\s\"'<>]+")
 TOKEN_HEADERS = {
@@ -233,20 +241,80 @@ class SpotifyCanvasService:
             return token
 
     async def _fetch_access_token(self) -> str | None:
-        async with httpx.AsyncClient(timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS, follow_redirects=True) as client:
-            response = await client.get(CANVAS_TOKEN_URL, headers=TOKEN_HEADERS)
+        """Tenta cookie sp_dc primeiro (se configurado), cai pra anônimo.
+
+        Em IPs de datacenter (Railway), o caminho anônimo retorna
+        `403 URL Blocked` da camada upstream — daí a prioridade do cookie.
+        """
+        if SPOTIFY_CANVAS_SP_DC:
+            token = await self._fetch_token_with_cookie()
+            if token:
+                return token
+            logger.warning(
+                "Spotify Canvas: sp_dc fallback acionado — cookie pode estar expirado/inválido"
+            )
+        return await self._fetch_token_anonymous()
+
+    async def _fetch_token_with_cookie(self) -> str | None:
+        headers = dict(TOKEN_HEADERS)
+        headers["Cookie"] = f"sp_dc={SPOTIFY_CANVAS_SP_DC}"
+        try:
+            async with httpx.AsyncClient(
+                timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS, follow_redirects=True
+            ) as client:
+                response = await client.get(CANVAS_TOKEN_URL_COOKIE, headers=headers)
+        except Exception:
+            logger.exception("Spotify Canvas cookie token request error")
+            return None
+        return self._extract_token(response, source="cookie")
+
+    async def _fetch_token_anonymous(self) -> str | None:
+        try:
+            async with httpx.AsyncClient(
+                timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS, follow_redirects=True
+            ) as client:
+                response = await client.get(CANVAS_TOKEN_URL_ANON, headers=TOKEN_HEADERS)
+        except Exception:
+            logger.exception("Spotify Canvas anonymous token request error")
+            return None
+        return self._extract_token(response, source="anon")
+
+    def _extract_token(self, response: httpx.Response, source: str) -> str | None:
+        if response.status_code == 403 and "URL Blocked" in response.text:
+            # Caso clássico de IP de datacenter bloqueado pelo upstream do Spotify.
+            logger.warning(
+                "Spotify Canvas token BLOCKED_BY_UPSTREAM (datacenter IP block) source=%s — "
+                "configure SPOTIFY_CANVAS_SP_DC com o cookie sp_dc de uma conta logada",
+                source,
+            )
+            return None
         if response.status_code != 200:
-            logger.warning("Spotify Canvas token failed: status=%s body=%s", response.status_code, response.text[:200])
+            logger.warning(
+                "Spotify Canvas token failed: source=%s status=%s body=%s",
+                source,
+                response.status_code,
+                response.text[:200],
+            )
             return None
         try:
             data = response.json()
         except ValueError:
-            logger.warning("Spotify Canvas token failed: non-json response status=%s body=%s", response.status_code, response.text[:200])
+            logger.warning(
+                "Spotify Canvas token failed: non-json response source=%s body=%s",
+                source,
+                response.text[:200],
+            )
             return None
         token = data.get("accessToken") or data.get("access_token")
         if not token:
-            logger.warning("Spotify Canvas token failed: token key missing keys=%s", sorted(data.keys()))
+            logger.warning(
+                "Spotify Canvas token failed: token key missing source=%s keys=%s",
+                source,
+                sorted(data.keys()),
+            )
             return None
+        is_anonymous = bool(data.get("isAnonymous"))
+        logger.info("Spotify Canvas token OK source=%s isAnonymous=%s", source, is_anonymous)
         return str(token)
 
     async def _fetch_canvas_url(self, track_id: str, access_token: str) -> str | None:
