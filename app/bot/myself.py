@@ -20,16 +20,21 @@ router = Router(name="myself")
 
 
 def _menu_keyboard(requester_id: int) -> InlineKeyboardMarkup:
+    # Bot API 9.4 (fev/2026): InlineKeyboardButton ganhou o campo `style`
+    # com valores "success" (verde), "danger" (vermelho) e "primary" (azul).
+    # aiogram 3.27 expõe direto. Sem emoji, só cor de fundo do botão.
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="📅 Semanal (7 dias)",
+                    text="Semanal",
                     callback_data=f"myself:w:{requester_id}",
+                    style="success",
                 ),
                 InlineKeyboardButton(
-                    text="🗓 Mensal",
+                    text="Mensal",
                     callback_data=f"myself:m:{requester_id}",
+                    style="danger",
                 ),
             ]
         ]

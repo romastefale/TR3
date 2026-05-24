@@ -36,16 +36,20 @@ def _menu_keyboard(scope: str, chat_id: int, requester_id: int) -> InlineKeyboar
     `scope` ∈ {"g","a"}: g=membros do grupo, a=todos conectados (DM owner).
     `chat_id` é usado no fluxo de grupo pra repetir o filtro no callback.
     """
+    # Bot API 9.4 (fev/2026): style="success" (verde) / "danger" (vermelho)
+    # nos InlineKeyboardButton. aiogram 3.27 expõe nativo. Sem emoji.
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="📅 Semanal (7 dias)",
+                    text="Semanal",
                     callback_data=f"songcharts:{scope}:w:{chat_id}:{requester_id}",
+                    style="success",
                 ),
                 InlineKeyboardButton(
-                    text="🗓 Mensal",
+                    text="Mensal",
                     callback_data=f"songcharts:{scope}:m:{chat_id}:{requester_id}",
+                    style="danger",
                 ),
             ]
         ]
