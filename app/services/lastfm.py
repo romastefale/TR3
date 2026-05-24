@@ -22,7 +22,20 @@ LASTFM_TRACK_INFO_TIMEOUT_SECONDS = 2.5
 
 
 def _clean_username(username: str) -> str:
-    value = username.strip().lstrip("@")
+    """Aceita o que o user manda e tenta extrair o username puro do Last.fm.
+
+    Tolera @ no começo, URL completa (`https://www.last.fm/user/<nome>`),
+    espaços extras e barras finais. Só levanta ValueError se mesmo depois
+    da limpeza o resultado não casar com o formato aceito pelo Last.fm.
+    """
+    value = (username or "").strip()
+    # URL do tipo "https://www.last.fm/user/romastefale[/...]"
+    url_match = re.search(r"last\.fm/user/([A-Za-z0-9_.-]{2,64})", value, re.IGNORECASE)
+    if url_match:
+        value = url_match.group(1)
+    # Remove @ e espaços/barras grudados no começo ou fim.
+    value = value.strip().strip("/").strip()
+    value = value.lstrip("@").strip()
     if not re.fullmatch(r"[A-Za-z0-9_.-]{2,64}", value):
         raise ValueError("username Last.fm inválido")
     return value
