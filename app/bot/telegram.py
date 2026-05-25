@@ -764,7 +764,43 @@ def _register_handlers(dp: Dispatcher) -> None:
     # `return` cedo devolveria None ao observer (que NÃO é UNHANDLED em
     # aiogram3), e a propagação para sub-routers seria abortada.
     # StateFilter(None) também evita interceptar texto durante FSM.
-    @dp.message(StateFilter(None), F.text, ~F.text.startswith("/"))
+    # CRÍTICO: TR3 e BTB não usam FSM nativo do aiogram (StateFilter(None)
+    # SEMPRE passa pra eles). Como este handler vive no dispatcher (root
+    # router) e aiogram3 testa handlers do root ANTES dos sub_routers
+    # (router.py:_propagate_event linhas 174-193), sem o guard
+    # `_owner_dialog_active` toda mensagem de texto livre do owner em DM
+    # seria consumida aqui (mesmo no-op) e NUNCA chegaria nos handlers
+    # `waiting_for` dos sub-routers tigrao/btb (rmod_link, customize_title,
+    # outbound_text, btb tadd/gmanual, etc), causando silêncio do bot.
+    def _owner_dialog_active(message: Message) -> bool:
+        # Lazy imports evitam ciclo (telegram.py é importado antes dos
+        # routers em main.py). Try/except por segurança caso módulo falhe.
+        try:
+            from app.moderation_tigrao.permissions import is_owner_private_message
+        except Exception:
+            return False
+        if not is_owner_private_message(message):
+            return False
+        try:
+            from app.moderation_tigrao.state import get_session as _tigrao_session
+            if _tigrao_session().waiting_for is not None:
+                return True
+        except Exception:
+            pass
+        try:
+            from app.btb.state import get_session as _btb_session
+            if _btb_session().waiting_for is not None:
+                return True
+        except Exception:
+            pass
+        return False
+
+    @dp.message(
+        StateFilter(None),
+        F.text,
+        ~F.text.startswith("/"),
+        lambda m: not _owner_dialog_active(m),
+    )
     async def text_aliases(message: Message) -> None:
         text = message.text or ""
         if detect_intent(text) == "play":
