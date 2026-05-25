@@ -1,7 +1,7 @@
 """Helpers para detectar se um usuário já conectou Spotify ou Last.fm,
 e textos padronizados para orientar quem ainda não conectou.
 
-Usado por comandos de música (/playing, /mood, /albnow, /tnow, ...) para
+Usado por comandos de música (/playing, /albnow, /tnow, ...) para
 mostrar a mesma orientação clara em qualquer chat, antes de tentar bater
 nas APIs externas.
 """

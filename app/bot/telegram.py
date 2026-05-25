@@ -22,37 +22,9 @@ from app.services.lastfm import lastfm_service
 from app.services.likes import likes_service
 from app.services.music import music_service
 from app.services.spotify import spotify_service
-from app.services.spotify_canvas import spotify_canvas_service
 
 logger = logging.getLogger(__name__)
 bot_dispatcher: Dispatcher = Dispatcher()
-
-MOOD_PHRASES_NORMAL = {
-    0: "☹︎ <i>Acho que <b>{name}</b> está no fundo de um abismo, onde até o silêncio pesa.</i>",
-    1: "⍨ <i>Acho que <b>{name}</b> está preso em uma melancolia que drena até o que resta.</i>",
-    2: "❃ <i>Acho que <b>{name}</b> está vagando em incertezas, tentando se reconhecer.</i>",
-    3: "⚲ <i>Acho que <b>{name}</b> está lutando para manter acesa uma esperança.</i>",
-    4: "✧ <i>Acho que <b>{name}</b> está começando a enxergar luz onde antes só havia peso.</i>",
-    5: "ꕤ <i>Acho que <b>{name}</b> está em equilíbrio, sustentando o próprio centro.</i>",
-    6: "✦ <i>Acho que <b>{name}</b> está retomando o controle e sentindo a força voltar.</i>",
-    7: "❀ <i>Acho que <b>{name}</b> está florescendo, em paz com o presente.</i>",
-    8: "✶ <i>Acho que <b>{name}</b> está irradiando energia que aquece tudo ao redor.</i>",
-    9: "✵ <i>Acho que <b>{name}</b> está em êxtase, vibrando acima de tudo.</i>",
-    10: "☻ <i>Acho que <b>{name}</b> está radiante, tomado por uma felicidade que transborda.</i>",
-}
-MOOD_PHRASES_CUNTY = {
-    0: "☹︎ <i>Infelizmente <b>{name}</b> não está mal — queria nem existir mesmo.</i>",
-    1: "⍨ <i>Dessa vez <b>{name}</b> está se arrastando por um dia que nem deveria ter existido.</i>",
-    2: "❃ <i>Acho que <b>{name}</b> está fudido, mas sabe que vai dar um jeito.</i>",
-    3: "⚲ <i>Acho que <b>{name}</b> está cansado de muito e de muitos, mas ainda não desistiu — vai ter volta.</i>",
-    4: "✧ <i>Felizmente <b>{name}</b> está começando a reagir, o fim de alguns está previsto.</i>",
-    5: "ꕤ <i>Acho que <b>{name}</b> está acordando — não por acaso, mas porque é uma gostosa resiliente.</i>",
-    6: "✦ <i>Boatos que <b>{name}</b> está voltando, gostosas são assim, como uma fênix.</i>",
-    7: "❀ <i>Soube que <b>{name}</b> está bem — e dessa vez, não haverá paz.</i>",
-    8: "✶ <i>O <b>{name}</b> está brilhando de um jeito que incomoda, e quem tem inveja se queima.</i>",
-    9: "✵ <i>Hoje <b>{name}</b> vai destruir alguém.</i>",
-    10: "☻ <i>Tenho certeza que <b>{name}</b> tem poder para iniciar o novo apocalipse — apenas tome cuidado.</i>",
-}
 
 
 def _safe_button(text: str, callback: str, style: str | None = None) -> InlineKeyboardButton:
@@ -222,15 +194,11 @@ def _register_handlers(dp: Dispatcher) -> None:
             "Porta de entrada do seu extrato pessoal. Abre um menu com dois botões: "
             "🟢 <b>Semanal</b>  |  🔴 <b>Mensal</b>. Gera um card visual com top artistas e músicas. "
             "Em grupo, só quem rodou o comando consegue clicar nos botões.\n\n"
-            "— INTERAÇÃO —\n\n"
-            "☻ /mood &lt;0-10&gt;\n"
-            "Compartilha sua música atual com uma nota de humor (0 = horrível, 10 = paraíso). "
-            "Ex.: <code>/mood 8</code>. Variante mais provocativa: adiciona <code>c</code> no número, ex.: <code>/mood 9c</code>.\n\n"
             "— CONEXÃO (LAST.FM) —\n\n"
             "↻ /lastfm &lt;username&gt;\n"
             "Conecta seu perfil <b>público</b> do Last.fm ao bot (sem o @). "
             "Ex.: se sua URL é <code>last.fm/user/romastefale</code>, manda <code>/lastfm romastefale</code>. "
-            "SEM ISSO você não aparece em /tnow nem usa /playing, /tcanvas, /myself, /mood. "
+            "SEM ISSO você não aparece em /tnow nem usa /playing, /tcanvas, /myself. "
             "Sem argumento, mostra qual username está salvo.\n\n"
             "⨯ /lastfmoff\n"
             "Remove o vínculo do seu Last.fm com o bot.",
@@ -453,40 +421,6 @@ def _register_handlers(dp: Dispatcher) -> None:
     @dp.message(Command("playing"))
     async def playing(message: Message) -> None:
         await _send_playing(message)
-
-    @dp.message(Command("mood"))
-    async def mood(message: Message) -> None:
-        if not message.from_user:
-            return
-        if not is_user_connected(message.from_user.id):
-            await message.answer(connect_hint_for(message.chat.type), parse_mode="HTML", disable_web_page_preview=True)
-            return
-        parts = (message.text or "").split()
-        if len(parts) < 2:
-            await message.answer("Erro: valor inválido.\nUse: /mood <0-10>")
-            return
-        raw = parts[1]
-        mode = "cunty" if raw.endswith("c") else "normal"
-        raw = raw[:-1] if raw.endswith("c") else raw
-        try:
-            score = int(raw)
-        except ValueError:
-            await message.answer("Erro: valor inválido.\nUse: /mood <0-10>")
-            return
-        if score < 0 or score > 10:
-            await message.answer("Erro: valor inválido.\nUse: /mood <0-10>")
-            return
-        track = await music_service.get_current_or_last_played(message.from_user.id)
-        if not track:
-            return
-        display_name = html.escape(message.from_user.full_name or "Usuário")
-        track_name, artist, _, cover = _track_label(track)
-        phrase = (MOOD_PHRASES_CUNTY if mode == "cunty" else MOOD_PHRASES_NORMAL)[score].format(name=display_name)
-        caption = f'<a href="tg://user?id={message.from_user.id}">{display_name}</a> · ♫ {track_name} — {artist}\n\n{phrase}'
-        if cover:
-            await message.answer_photo(photo=cover, caption=caption, parse_mode="HTML")
-        else:
-            await message.answer(caption, parse_mode="HTML")
 
     # /myself e /songcharts foram movidos pra `app/bot/myself.py` e
     # `app/bot/songcharts.py`. Os novos comandos usam Last.fm (em vez de
