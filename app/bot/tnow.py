@@ -206,11 +206,14 @@ async def _finish_tnow(status: Message) -> None:
         caption = f"♫ <b>tocando agora</b> • {len(entries)} pessoa{'s' if len(entries) != 1 else ''}"
         if card_bytes:
             await _safe_delete(status)
-            await status.answer_photo(
+            sent = await status.answer_photo(
                 photo=BufferedInputFile(card_bytes, filename="tnow.jpg"),
                 caption=caption,
                 parse_mode="HTML",
             )
+            # Sprint 11: bot reage 🔥 no mosaico do grupo.
+            from app.bot.telegram import _react_to_own_card, _CARD_EMOJI_TNOW
+            await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, _CARD_EMOJI_TNOW)
             return
 
         # Fallback textual quando Playwright não está disponível ou falhou.

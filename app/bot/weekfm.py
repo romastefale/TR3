@@ -41,23 +41,27 @@ async def _finish_weekfm(message: Message, user_id: int, display_name: str, raw_
         )
         text = result.text
         card_bytes = await render_monthfm_card(result.card_data) if result.card_data else None
+        # Sprint 11: bot reage 🏆 no card de extrato.
+        from app.bot.telegram import _react_to_own_card, _CARD_EMOJI_EXTRACT
         if card_bytes:
             # Card visual gerado → não enviamos a mensagem-texto duplicada.
             # O texto segue como fallback nos branches sem card_bytes.
             await _safe_delete(message)
-            await message.answer_photo(
+            sent = await message.answer_photo(
                 photo=BufferedInputFile(card_bytes, filename="weekfm-card.jpg"),
                 caption=_caption(result.card_data, display_name, user_id),
                 parse_mode="HTML",
             )
+            await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, _CARD_EMOJI_EXTRACT)
             return
         if result.photo_bytes:
             await _safe_delete(message)
-            await message.answer_photo(
+            sent = await message.answer_photo(
                 photo=BufferedInputFile(result.photo_bytes, filename="weekfm.jpg"),
                 caption=_caption(result.card_data, display_name, user_id),
                 parse_mode="HTML",
             )
+            await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, _CARD_EMOJI_EXTRACT)
             await message.answer(text, parse_mode="HTML")
             return
         if len(text) <= 3900:

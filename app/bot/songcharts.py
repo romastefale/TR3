@@ -220,6 +220,10 @@ async def _render_and_send(
             text=result.text,
             parse_mode="HTML",
         )
+    # Sprint 11: bot reage 🏆 no card de ranking (grupo ou DM owner global).
+    if sent is not None:
+        from app.bot.telegram import _react_to_own_card, _CARD_EMOJI_EXTRACT
+        await _react_to_own_card(bot, sent.chat.id, sent.message_id, _CARD_EMOJI_EXTRACT)
 
     if pin and sent is not None:
         try:

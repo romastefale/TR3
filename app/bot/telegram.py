@@ -50,6 +50,8 @@ _MANUAL_REQUEST_USER_ID = 1001
 # marca milestone a cada 5 plays Last.fm.
 _CARD_EMOJI_DEFAULT = "🔥"
 _CARD_EMOJI_LOVED = "❤"
+_CARD_EMOJI_EXTRACT = "🏆"  # extratos visuais: /myself, /weekfm, /monthfm, /songcharts
+_CARD_EMOJI_TNOW = "🔥"      # mosaico /tnow (energia do grupo)
 _LOVED_PLAYS_THRESHOLD = 5
 
 

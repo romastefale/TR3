@@ -62,9 +62,13 @@ async def myself(message: Message) -> None:
         )
         return
 
-    await message.answer(
+    # Sprint 11: effect PARTY em DM (toda vez user abre o extrato), graceful em grupo.
+    from app.bot.telegram import _answer_with_effect, _EFFECT_PARTY
+    await _answer_with_effect(
+        message,
         "♫ Qual extrato você quer?\n"
         "Escolha o período do seu Last.fm:",
+        _EFFECT_PARTY,
         reply_markup=_menu_keyboard(requester.id),
     )
 
