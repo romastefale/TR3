@@ -91,6 +91,9 @@ def _safe_int(value: Any) -> int | None:
     return parsed if parsed >= 0 else None
 
 
+_USERNAME_CACHE_MAX = 4096
+
+
 class LastfmService:
     def __init__(self) -> None:
         # Sprint 4 (S4.1): pool httpx compartilhado pra Last.fm + Deezer.
@@ -100,6 +103,26 @@ class LastfmService:
         # timeout "padrão" (HTTP_TIMEOUT_SECONDS) e cada `.get()` que
         # precisa de algo mais agressivo passa `timeout=` explícito.
         self._http: httpx.AsyncClient | None = None
+        # Sprint 4 (S4.5): cache user_id -> username|None. `None` cacheia
+        # "sabidamente sem Last.fm" pra evitar SELECT idêntico repetido
+        # (hot path: /songcharts agrega N membros do grupo, cada um
+        # passava por get_username; /tnow chama uma vez por execução).
+        # Sem TTL — invalidação acontece nas 3 rotas de mutação
+        # (set_username, manual_register, clear_username). Single-process
+        # no Railway, então cache fica coerente. Cap em 4096 entradas
+        # com eviction simples dos mais antigos pra bounded memory.
+        self._username_cache: dict[int, str | None] = {}
+
+    def _username_cache_set(self, user_id: int, value: str | None) -> None:
+        self._username_cache[user_id] = value
+        if len(self._username_cache) > _USERNAME_CACHE_MAX:
+            # Descarta 25% (ordem de inserção do dict — Python 3.7+).
+            drop = len(self._username_cache) // 4
+            for key in list(self._username_cache.keys())[:drop]:
+                self._username_cache.pop(key, None)
+
+    def _username_cache_invalidate(self, user_id: int) -> None:
+        self._username_cache.pop(user_id, None)
 
     def _client(self) -> httpx.AsyncClient:
         if self._http is None:
@@ -133,6 +156,9 @@ class LastfmService:
             else:
                 db.add(LastfmProfile(user_id=user_id, username=clean, created_at=now, updated_at=now))
             db.commit()
+        # Sprint 4 (S4.5): atualiza cache com o valor novo (write-through
+        # evita um SELECT extra na próxima leitura).
+        self._username_cache_set(user_id, clean)
         return clean, previous
 
     async def manual_register(self, user_id: int, username: str) -> tuple[str, int]:
@@ -160,6 +186,9 @@ class LastfmService:
                 )
             )
             db.commit()
+        # Sprint 4 (S4.5): write-through. manual_register substitui tudo
+        # do user_id, então gravar `clean` direto é seguro.
+        self._username_cache_set(user_id, clean)
         return clean, int(deleted or 0)
 
     async def clear_username(self, user_id: int) -> bool:
@@ -168,13 +197,27 @@ class LastfmService:
             if profile:
                 db.delete(profile)
                 db.commit()
+                # Sprint 4 (S4.5): marca como ausente no cache (None) —
+                # próxima leitura responde sem SELECT.
+                self._username_cache_set(user_id, None)
                 return True
+        # Sprint 4 (S4.5): mesmo quando não havia profile no banco,
+        # registra ausência no cache pra evitar SELECT futuro.
+        self._username_cache_set(user_id, None)
         return False
 
     async def get_username(self, user_id: int) -> str | None:
+        # Sprint 4 (S4.5): cache hit serve user_id conhecido (com username
+        # ou marcado como ausente via None) sem tocar no DB. Em hot paths
+        # como /songcharts (itera N membros do grupo), poupa N SELECTs por
+        # execução. Invalidação cuidada nas 3 rotas de mutação.
+        if user_id in self._username_cache:
+            return self._username_cache[user_id]
         with SessionLocal() as db:
             profile = db.query(LastfmProfile).filter_by(user_id=user_id).first()
-            return profile.username if profile else None
+            username = profile.username if profile else None
+        self._username_cache_set(user_id, username)
+        return username
 
     async def get_all_profiles(self) -> list[tuple[int, str]]:
         """Lista todos os Last.fm conectados como tuplas (user_id, username).
