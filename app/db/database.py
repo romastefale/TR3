@@ -124,10 +124,12 @@ def run_migrations(engine) -> None:
 
 def init_db() -> None:
     try:
+        from app.models.card_message import CardMessage  # noqa: F401  # Sprint 8
         from app.models.lastfm_profile import LastfmProfile  # noqa: F401
         from app.models.spotify_token import SpotifyToken  # noqa: F401
         from app.models.track_like import TrackLike  # noqa: F401
         from app.models.track_play import TrackPlay  # noqa: F401
+        from app.models.track_reaction import TrackReaction  # noqa: F401  # Sprint 8
 
         Base.metadata.create_all(bind=engine)
         logger.info("Database initialized.")

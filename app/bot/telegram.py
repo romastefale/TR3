@@ -8,11 +8,10 @@ from aiogram import Dispatcher, F
 from aiogram.filters import Command, StateFilter
 from aiogram.types import (
     CallbackQuery,
-    InlineKeyboardButton,
-    InlineKeyboardMarkup,
     InlineQuery,
     InlineQueryResultPhoto,
     Message,
+    MessageReactionUpdated,
 )
 
 from app.bot.intent import detect_intent
@@ -22,39 +21,11 @@ from app.services.connection_check import connect_hint_for, is_user_connected
 from app.services.lastfm import lastfm_service
 from app.services.likes import likes_service
 from app.services.music import music_service
+from app.services.reactions import reactions_service
 from app.services.spotify import spotify_service
 
 logger = logging.getLogger(__name__)
 bot_dispatcher: Dispatcher = Dispatcher()
-
-
-def _safe_button(text: str, callback: str, style: str | None = None) -> InlineKeyboardButton:
-    try:
-        if style:
-            return InlineKeyboardButton(text=text, callback_data=callback, style=style)  # type: ignore[call-arg]
-    except Exception:
-        pass
-    return InlineKeyboardButton(text=text, callback_data=callback)
-
-
-def _playing_keyboard(
-    track_id: str,
-    owner_user_id: int,
-    total_plays: int,
-    total_likes: int,
-    liked: bool,
-    plays_source: str = "local",
-) -> InlineKeyboardMarkup:
-    heart = "♥" if liked else "♡"
-    plays_style = "primary" if plays_source == "lastfm" else "success"
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [
-                _safe_button(f"♫ {total_plays}", f"plays:{owner_user_id}:{plays_source}:{track_id}", style=plays_style),
-                _safe_button(f"{heart} {total_likes}", f"like:{owner_user_id}:{track_id}", style="danger"),
-            ]
-        ]
-    )
 
 
 def _track_label(track: dict) -> tuple[str, str, str, str | None]:
@@ -82,7 +53,7 @@ async def _resolve_play_button_count(user_id: int, track_id: str, artist: str | 
 
 async def build_playing_payload_for_user(
     user_id: int, display_name_raw: str, track: dict
-) -> tuple[str, str, str | None, InlineKeyboardMarkup] | None:
+) -> tuple[str, str, str | None, None] | None:
     """Variante que aceita user_id/display_name explícitos.
 
     Usada por /nowp (envio remoto via callback, onde `message.from_user` seria
@@ -113,17 +84,24 @@ async def build_playing_payload_for_user(
     user_link = f"tg://user?id={user_id}"
     track_name, artist, track_url, cover = _track_label(track)
     track_part = f'<a href="{track_url}">{track_name}</a>' if track_url else track_name
+    # Sprint 8: caption agora mostra "♫ N · track — artist" onde N é o
+    # playcount per-user (Last.fm ou local). Botões ♫ plays e ♥ likes
+    # removidos — substituídos por reactions nativas do Telegram (count
+    # via @dp.message_reaction + tabela track_reactions). Layout +clean.
+    # NOTA: total_likes/liked/plays_source ainda calculados acima pra
+    # preservar compatibilidade com `register_play` (side effect) e o
+    # ♥ user_total_likes da linha 1 (legacy, dados históricos).
+    _ = (total_likes, liked, plays_source)  # mantém vars pra clareza/grep
     caption = (
         f"<b><a href=\"{html.escape(user_link)}\">{display_name}</a></b> · ♥ <code>{user_total_likes}</code>\n\n"
-        f"♫ <b>{track_part}</b> — <i>{artist}</i>"
+        f"♫ <code>{total_plays}</code> · <b>{track_part}</b> — <i>{artist}</i>"
     )
-    keyboard = _playing_keyboard(track_id, user_id, total_plays, total_likes, liked, plays_source)
-    return track_id, caption, cover, keyboard
+    return track_id, caption, cover, None
 
 
 async def build_playing_payload(
     message: Message, track: dict
-) -> tuple[str, str, str | None, InlineKeyboardMarkup] | None:
+) -> tuple[str, str, str | None, None] | None:
     """Registra o play e monta (track_id, caption HTML, cover_url, keyboard).
 
     Side effect: chama `likes_service.register_play`. Retorna `None` se faltar
@@ -179,12 +157,24 @@ async def _send_playing(message: Message) -> None:
     if not payload:
         await message.answer("Erro ao identificar a música.")
         return
-    _track_id, caption, cover, keyboard = payload
+    track_id, caption, cover, keyboard = payload
 
     if cover:
-        await message.answer_photo(photo=cover, caption=caption, parse_mode="HTML", reply_markup=keyboard)
+        sent = await message.answer_photo(photo=cover, caption=caption, parse_mode="HTML", reply_markup=keyboard)
     else:
-        await message.answer(caption, parse_mode="HTML", reply_markup=keyboard)
+        sent = await message.answer(caption, parse_mode="HTML", reply_markup=keyboard)
+
+    # Sprint 8: registra (chat_id, message_id) -> track pra que reactions
+    # nativas dos users virem stats. Fire-and-forget interno (service
+    # captura exceções), nunca quebra o envio do card.
+    await reactions_service.register_card(
+        chat_id=sent.chat.id,
+        message_id=sent.message_id,
+        track_id=track_id,
+        owner_user_id=user_id,
+        track_name=str(track.get("track_name") or "").strip() or None,
+        artist_name=str(track.get("artist") or "").strip() or None,
+    )
 
 
 def _register_handlers(dp: Dispatcher) -> None:
@@ -487,27 +477,44 @@ def _register_handlers(dp: Dispatcher) -> None:
 
     @dp.callback_query(F.data.startswith("like:"))
     async def like_callback(query: CallbackQuery) -> None:
-        if not query.from_user or not query.data:
-            return
-        parts = query.data.split(":", 2)
-        if len(parts) != 3:
-            await query.answer()
-            return
+        # Sprint 8: botão ♥ likes foi removido — substituído por reactions
+        # nativas. Stub silencioso pra mensagens ANTIGAS (cards postados
+        # antes do deploy) que ainda têm o botão pendurado. Sem isso, o
+        # clique falharia com "callback expired" e o user veria erro.
+        await query.answer("Agora curtir é só reagir na mensagem 👀")
+
+    @dp.message_reaction()
+    async def on_message_reaction(event: MessageReactionUpdated) -> None:
+        """Sprint 8: tracking de reactions nos cards /playing.
+
+        Telegram envia este update toda vez que um user adiciona/remove
+        reaction numa mensagem em grupo onde o bot é admin. Se a mensagem
+        for um card trackado (existe em card_messages), grava o diff em
+        track_reactions. Caso contrário, ignora silenciosamente.
+        """
+        if not event.user:
+            return  # reaction anônima (rara) ou de canal — ignora
+        old_emojis = [
+            r.emoji for r in (event.old_reaction or [])
+            if hasattr(r, "emoji") and getattr(r, "emoji", None)
+        ]
+        new_emojis = [
+            r.emoji for r in (event.new_reaction or [])
+            if hasattr(r, "emoji") and getattr(r, "emoji", None)
+        ]
         try:
-            owner_user_id = int(parts[1])
-        except ValueError:
-            await query.answer()
-            return
-        track_id = parts[2]
-        liked = await likes_service.toggle_track_like(query.from_user.id, owner_user_id, track_id)
-        total_likes = await likes_service.get_total_likes(track_id, owner_user_id=owner_user_id)
-        track_name, artist = await likes_service.get_track_metadata(track_id, owner_user_id=owner_user_id)
-        total_plays, plays_source = await _resolve_play_button_count(owner_user_id, track_id, artist, track_name)
-        try:
-            await query.message.edit_reply_markup(reply_markup=_playing_keyboard(track_id, owner_user_id, total_plays, total_likes, liked, plays_source))  # type: ignore[union-attr]
+            await reactions_service.apply_reaction_change(
+                chat_id=event.chat.id,
+                message_id=event.message_id,
+                user_id=event.user.id,
+                old_emojis=old_emojis,
+                new_emojis=new_emojis,
+            )
         except Exception:
-            logger.exception("Failed to edit like markup")
-        await query.answer()
+            logger.exception(
+                "MESSAGE_REACTION_FAILED chat=%s msg=%s user=%s",
+                event.chat.id, event.message_id, event.user.id,
+            )
 
     @dp.inline_query()
     async def inline_play(query: InlineQuery) -> None:

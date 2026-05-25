@@ -17,6 +17,7 @@ from app.bot.songcharts import router as songcharts_router
 from app.bot.tcanvas import router as tcanvas_router
 from app.bot.tnow import router as tnow_router
 from app.bot.weekfm import router as weekfm_router, weekfm as weekfm_command
+from app.bot.mention_reactor import react_if_mention  # Sprint 8
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
 from app.bot.tigraoresponde import handle_tigraoresponde_update
 from app.btb import btb_router
@@ -445,6 +446,13 @@ async def telegram_webhook(request: Request):
             _remember_group_from_update(update)
         except Exception:
             logger.exception("TIGRAO_GROUP_REMEMBER_FAILED | update_id=%s", update.update_id)
+        # Sprint 8: reage 👀 a termos-gatilho em grupos. NUNCA consome
+        # update (react_if_mention sempre retorna None), só dispara
+        # paralelo aos demais handlers.
+        try:
+            await react_if_mention(bot, update)
+        except Exception:
+            logger.exception("MENTION_REACT_HOOK_FAILED | update_id=%s", update.update_id)
         await _handle_btb_capture(update)
         try:
             tigraoresponde_handled = await handle_tigraoresponde_update(bot, update)

@@ -20,18 +20,30 @@ from aiogram.types import BufferedInputFile, Message
 from app.bot.telegram import build_playing_payload
 from app.services.connection_check import connect_hint_for, is_user_connected
 from app.services.music import music_service
+from app.services.reactions import reactions_service
 from app.services.spotify_canvas import spotify_canvas_service
 
 logger = logging.getLogger(__name__)
 router = Router()
 
 
-async def _send_fallback(message: Message, caption: str, cover: str | None, keyboard) -> None:
+async def _send_fallback(message: Message, caption: str, cover: str | None, keyboard) -> Message:
     """Fallback silencioso: mesmo resultado do /playing normal."""
     if cover:
-        await message.answer_photo(photo=cover, caption=caption, parse_mode="HTML", reply_markup=keyboard)
-    else:
-        await message.answer(caption, parse_mode="HTML", reply_markup=keyboard)
+        return await message.answer_photo(photo=cover, caption=caption, parse_mode="HTML", reply_markup=keyboard)
+    return await message.answer(caption, parse_mode="HTML", reply_markup=keyboard)
+
+
+async def _register_card(sent: Message, track: dict, track_id: str, owner_user_id: int) -> None:
+    """Sprint 8: registra card pra reactions tracking. Mesma lógica do /playing."""
+    await reactions_service.register_card(
+        chat_id=sent.chat.id,
+        message_id=sent.message_id,
+        track_id=track_id,
+        owner_user_id=owner_user_id,
+        track_name=str(track.get("track_name") or "").strip() or None,
+        artist_name=str(track.get("artist") or "").strip() or None,
+    )
 
 
 @router.message(Command("tcanvas"))
@@ -60,22 +72,26 @@ async def tcanvas(message: Message) -> None:
     canvas_url = await spotify_canvas_service.get_canvas_url(track_id)
     if not canvas_url:
         logger.info("TCANVAS_NO_CANVAS track_id=%s", track_id)
-        await _send_fallback(message, caption, cover, keyboard)
+        sent = await _send_fallback(message, caption, cover, keyboard)
+        await _register_card(sent, track, track_id, message.from_user.id)
         return
 
     canvas_bytes = await spotify_canvas_service.download_canvas_bytes(canvas_url)
     if not canvas_bytes:
         logger.info("TCANVAS_DOWNLOAD_FAILED track_id=%s", track_id)
-        await _send_fallback(message, caption, cover, keyboard)
+        sent = await _send_fallback(message, caption, cover, keyboard)
+        await _register_card(sent, track, track_id, message.from_user.id)
         return
 
     try:
-        await message.answer_video(
+        sent = await message.answer_video(
             video=BufferedInputFile(canvas_bytes, filename=f"canvas-{track_id}.mp4"),
             caption=caption,
             parse_mode="HTML",
             reply_markup=keyboard,
         )
+        await _register_card(sent, track, track_id, message.from_user.id)
     except Exception:
         logger.exception("TCANVAS_SEND_FAILED track_id=%s", track_id)
-        await _send_fallback(message, caption, cover, keyboard)
+        sent = await _send_fallback(message, caption, cover, keyboard)
+        await _register_card(sent, track, track_id, message.from_user.id)

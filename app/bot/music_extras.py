@@ -14,6 +14,7 @@ from app.db.database import SessionLocal
 from app.moderation_tigrao.storage import list_groups
 from app.services.likes import likes_service
 from app.services.music import music_service
+from app.services.reactions import reactions_service  # Sprint 8
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +168,21 @@ async def _send_kingplay(message: Message, target_chat_id: int, owner_user_id: i
         logger.exception("Falha de envio no /kingplay", exc_info=exc)
         await message.answer("Erro ao enviar mensagem no grupo.")
         return False
+
+    # Sprint 8: registra card pra reactions tracking (mesmo do /playing).
+    track_id_raw = str(track.get("track_id") or "").strip()
+    if track_id_raw:
+        try:
+            await reactions_service.register_card(
+                chat_id=sent.chat.id,
+                message_id=sent.message_id,
+                track_id=track_id_raw,
+                owner_user_id=owner_user_id,
+                track_name=_normalize_optional_text(track.get("track_name")),
+                artist_name=_normalize_optional_text(track.get("artist")),
+            )
+        except Exception:
+            logger.exception("KINGPLAY_REGISTER_CARD_FAILED chat=%s", target_chat_id)
 
     try:
         await message.bot.pin_chat_message(chat_id=target_chat_id, message_id=sent.message_id)
@@ -330,12 +346,12 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
         # 1) Envia pro grupo alvo (como se /playing tivesse rodado lá dentro).
         try:
             if cover:
-                await query.bot.send_photo(
+                sent_group = await query.bot.send_photo(
                     chat_id=target_chat_id, photo=str(cover),
                     caption=caption, parse_mode="HTML", reply_markup=keyboard,
                 )
             else:
-                await query.bot.send_message(
+                sent_group = await query.bot.send_message(
                     chat_id=target_chat_id, text=caption,
                     parse_mode="HTML", reply_markup=keyboard,
                 )
@@ -350,6 +366,19 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
                 pass
             return
 
+        # Sprint 8: registra card no grupo pra reactions tracking.
+        try:
+            await reactions_service.register_card(
+                chat_id=sent_group.chat.id,
+                message_id=sent_group.message_id,
+                track_id=_track_id,
+                owner_user_id=requester_id,
+                track_name=_normalize_optional_text(track.get("track_name")),
+                artist_name=_normalize_optional_text(track.get("artist")),
+            )
+        except Exception:
+            logger.exception("NOWP_REGISTER_CARD_FAILED chat=%s", target_chat_id)
+
         # 2) Substitui o picker no DM pelo próprio /playing (mesma legenda + capa).
         try:
             await query.message.delete()
@@ -357,15 +386,27 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
             pass
         try:
             if cover:
-                await query.bot.send_photo(
+                sent_dm = await query.bot.send_photo(
                     chat_id=query.from_user.id, photo=str(cover),
                     caption=caption, parse_mode="HTML", reply_markup=keyboard,
                 )
             else:
-                await query.bot.send_message(
+                sent_dm = await query.bot.send_message(
                     chat_id=query.from_user.id, text=caption,
                     parse_mode="HTML", reply_markup=keyboard,
                 )
+            # Sprint 8: registra também o card no DM (user pode reagir no DM).
+            try:
+                await reactions_service.register_card(
+                    chat_id=sent_dm.chat.id,
+                    message_id=sent_dm.message_id,
+                    track_id=_track_id,
+                    owner_user_id=requester_id,
+                    track_name=_normalize_optional_text(track.get("track_name")),
+                    artist_name=_normalize_optional_text(track.get("artist")),
+                )
+            except Exception:
+                logger.exception("NOWP_REGISTER_CARD_DM_FAILED user=%s", requester_id)
         except Exception:
             logger.exception("NOWP_SEND_DM_FAILED user=%s", requester_id)
 
