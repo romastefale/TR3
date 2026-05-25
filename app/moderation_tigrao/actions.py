@@ -233,3 +233,187 @@ async def set_member_tag(bot: Bot, chat_id: int, user_id: int, tag: str) -> None
     if not data.get("ok"):
         description = data.get("description") or response.text
         raise RuntimeError(f"Telegram setChatMemberTag falhou: {description}")
+
+
+# Sprint X1 (TR3): Reaction Moderation on-demand.
+# Usa httpx raw porque aiogram 3.27 pode não ter os métodos novos da Bot API
+# (deleteMessageReaction, deleteAllMessageReactions) tipados, e a flag
+# can_react_to_messages pode não estar em ChatPermissions ainda. Raw garante
+# que mandamos o payload exato pra API, independente da versão da lib.
+async def _telegram_raw(method: str, payload: dict[str, Any]) -> dict[str, Any]:
+    if not TELEGRAM_BOT_TOKEN:
+        raise RuntimeError("TELEGRAM_BOT_TOKEN ausente")
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/{method}"
+    async with httpx.AsyncClient(timeout=10.0) as client:
+        response = await client.post(url, json=payload)
+    data = response.json()
+    if not data.get("ok"):
+        description = data.get("description") or response.text
+        # Re-raise como RuntimeError pra cair no except Exception genérico
+        # com mensagem clara. Não usamos TelegramBadRequest pra não confundir
+        # com erros vindos do aiogram (caller distingue por mensagem).
+        raise RuntimeError(f"Telegram {method} falhou: {description}")
+    return data
+
+
+async def delete_message_reaction(
+    bot: Bot, chat_id: int | str, message_id: int, emoji: str
+) -> None:
+    """Apaga uma reaction específica de uma mensagem.
+
+    ATENÇÃO: per spec do Bot API, esse método pode estar limitado a apagar
+    apenas reactions setadas pelo próprio bot. Owner foi avisado no painel.
+    Se a API recusar, BadRequest cai no except do caller.
+    """
+    payload = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "reaction": {"type": "emoji", "emoji": emoji},
+    }
+    await _with_telegram_retry(
+        lambda: _telegram_raw("deleteMessageReaction", payload),
+        label="delete_message_reaction",
+    )
+
+
+async def delete_all_message_reactions(
+    bot: Bot, chat_id: int | str, message_id: int
+) -> None:
+    """Apaga TODAS as reactions de uma mensagem (admin com can_delete_messages)."""
+    payload = {"chat_id": chat_id, "message_id": message_id}
+    await _with_telegram_retry(
+        lambda: _telegram_raw("deleteAllMessageReactions", payload),
+        label="delete_all_message_reactions",
+    )
+
+
+async def _build_permissions_overlay(
+    bot: Bot, chat_id: int, user_id: int, overrides: dict[str, bool]
+) -> dict[str, bool]:
+    """Lê permissões atuais do user e aplica overrides preservando o resto.
+
+    CRÍTICO: restrictChatMember NÃO é additive — sem isso, setar
+    can_react_to_messages=False zeraria todas outras permissions e o user
+    ficaria 100% mudo. Estratégia:
+    1) Se user é ChatMemberRestricted, copia permissões dele (mais restritivas
+       que default, preserva mutes existentes).
+    2) Senão, usa permissions defaults do grupo (get_chat.permissions).
+    3) Aplica overrides por cima.
+    """
+    base: dict[str, bool] = {}
+
+    try:
+        member = await bot.get_chat_member(chat_id, user_id)
+        status = getattr(member, "status", None)
+        if status == "restricted":
+            for flag in (
+                "can_send_messages", "can_send_audios", "can_send_documents",
+                "can_send_photos", "can_send_videos", "can_send_video_notes",
+                "can_send_voice_notes", "can_send_polls", "can_send_other_messages",
+                "can_add_web_page_previews", "can_change_info", "can_invite_users",
+                "can_pin_messages", "can_manage_topics", "can_react_to_messages",
+            ):
+                val = getattr(member, flag, None)
+                if val is not None:
+                    base[flag] = bool(val)
+    except Exception as exc:
+        logger.warning(
+            "TIGRAO_RMOD_GET_MEMBER_FAILED | chat_id=%s | user=%s | %s",
+            chat_id, user_id, exc,
+        )
+
+    if not base:
+        # Fallback: defaults do grupo. Se não conseguir, assume tudo True
+        # (cenário pessimista — não queremos silenciar mais que pedido).
+        try:
+            chat = await bot.get_chat(chat_id)
+            perms = getattr(chat, "permissions", None)
+            if perms is not None:
+                for flag in (
+                    "can_send_messages", "can_send_audios", "can_send_documents",
+                    "can_send_photos", "can_send_videos", "can_send_video_notes",
+                    "can_send_voice_notes", "can_send_polls", "can_send_other_messages",
+                    "can_add_web_page_previews", "can_change_info", "can_invite_users",
+                    "can_pin_messages", "can_manage_topics", "can_react_to_messages",
+                ):
+                    val = getattr(perms, flag, None)
+                    if val is not None:
+                        base[flag] = bool(val)
+        except Exception as exc:
+            logger.warning(
+                "TIGRAO_RMOD_GET_CHAT_FAILED | chat_id=%s | %s", chat_id, exc,
+            )
+
+    if not base:
+        base = {
+            "can_send_messages": True, "can_send_audios": True,
+            "can_send_documents": True, "can_send_photos": True,
+            "can_send_videos": True, "can_send_video_notes": True,
+            "can_send_voice_notes": True, "can_send_polls": True,
+            "can_send_other_messages": True, "can_add_web_page_previews": True,
+            "can_invite_users": True, "can_react_to_messages": True,
+        }
+
+    base.update(overrides)
+    return base
+
+
+async def mute_reactions(
+    bot: Bot, chat_id: int, user_id: int, duration: timedelta | str
+) -> None:
+    """Silencia SÓ reactions do user (can_react_to_messages=False), preservando
+    todas outras permissões.
+    """
+    perms = await _build_permissions_overlay(
+        bot, chat_id, user_id, {"can_react_to_messages": False}
+    )
+    payload: dict[str, Any] = {
+        "chat_id": chat_id,
+        "user_id": user_id,
+        "permissions": perms,
+    }
+    if duration != "indefinido" and isinstance(duration, timedelta):
+        until = datetime.now(timezone.utc) + duration
+        payload["until_date"] = int(until.timestamp())
+    await _with_telegram_retry(
+        lambda: _telegram_raw("restrictChatMember", payload),
+        label="restrict_chat_member_react_mute",
+    )
+
+
+async def resolve_user_target(bot: Bot, value: str) -> tuple[int, str]:
+    """Aceita user_id numérico OU @username e retorna (user_id, label).
+
+    Label é o que mostrar pro owner (id se veio id, "@user" se veio username).
+    Levanta ValueError se input vazio/inválido sintaticamente. Levanta
+    RuntimeError se username não resolve.
+    """
+    raw = str(value).strip()
+    if not raw:
+        raise ValueError("user vazio")
+
+    # Tira @ inicial pra normalizar
+    if raw.startswith("@"):
+        username = raw[1:]
+        if not username or len(username) < 5 or len(username) > 32:
+            raise ValueError("@username inválido (5-32 caracteres)")
+        if not all(c.isalnum() or c == "_" for c in username):
+            raise ValueError("@username com caractere inválido")
+        try:
+            chat = await bot.get_chat(f"@{username}")
+        except Exception as exc:
+            raise RuntimeError(f"não foi possível resolver @{username}: {exc}")
+        chat_type = getattr(chat, "type", None)
+        if chat_type != "private":
+            raise RuntimeError(f"@{username} não é um usuário (é {chat_type})")
+        uid = getattr(chat, "id", None)
+        if not isinstance(uid, int):
+            raise RuntimeError(f"@{username} sem id válido")
+        return uid, f"@{username}"
+
+    # Tenta numérico
+    digits = raw.replace(" ", "")
+    if digits.isdigit():
+        return int(digits), digits
+
+    raise ValueError("envie user_id numérico ou @username")

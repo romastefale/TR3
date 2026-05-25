@@ -14,9 +14,13 @@ from app.moderation_tigrao.actions import (
     copy_message,
     create_approval_link,
     create_direct_link,
+    delete_all_message_reactions,
     delete_message,
+    delete_message_reaction,
+    mute_reactions,
     mute_user,
     reset_entry,
+    resolve_user_target,
     set_group_description,
     set_group_title,
     unban_user,
@@ -31,10 +35,13 @@ from app.moderation_tigrao.keyboards import (
     links_keyboard,
     logs_keyboard,
     messages_keyboard,
+    reactions_mod_keyboard,
+    rmod_confirm_keyboard,
+    rmod_duration_keyboard,
     user_actions_keyboard,
 )
 from app.moderation_tigrao.parsers import parse_chat_id, parse_duration, parse_message_link, parse_user_id
-from app.moderation_tigrao.permissions import is_owner_callback, is_owner_private_message
+from app.moderation_tigrao.permissions import OWNER_ID, is_owner_callback, is_owner_private_message
 from app.moderation_tigrao.state import (
     clear_action,
     consume_if_expired,
@@ -109,9 +116,16 @@ ACTION_LABELS = {
     "unmute": "Desmutar usuário",
     "approve": "Aprovar entrada",
     "reset": "Resetar entrada",
+    "rmod_del_one": "Apagar 1 reaction",
+    "rmod_del_all": "Apagar TODAS reactions",
+    "rmod_mute_react": "Silenciar reactor",
 }
 SIMPLE_EXECUTABLE_ACTIONS = {"ban", "unban", "unmute", "approve", "reset"}
-TEXT_WAITING_STATES = {"chat_id", "outbound_text", "message_link", "user_id", "duration", "customize_title", "customize_bio"}
+TEXT_WAITING_STATES = {
+    "chat_id", "outbound_text", "message_link", "user_id", "duration",
+    "customize_title", "customize_bio",
+    "rmod_link", "rmod_emoji", "rmod_user",
+}
 
 
 def _section_text(title: str, detail: str) -> str:
@@ -149,6 +163,32 @@ def _execution_text(action: str, chat_id: int | str, target_user_id: int | str, 
         f"{duration_line}\n\n"
         "Aguarde o retorno de conclusão ou erro."
     )
+
+
+def _rmod_confirm_text() -> str:
+    session = get_session()
+    action = session.selected_action or ""
+    action_label = ACTION_LABELS.get(action, action)
+    p = session.payload
+    lines = ["Tigrão — confirmar moderação de reactions", "", f"Ação: {action_label}"]
+    if action == "rmod_del_one":
+        lines.append(f"Mensagem: {p.get('link_chat_id')} / {p.get('link_msg_id')}")
+        lines.append(f"Emoji: {p.get('emoji')}")
+        lines.append("")
+        lines.append("Atenção: a API pode permitir apagar apenas reactions setadas pelo próprio bot.")
+    elif action == "rmod_del_all":
+        lines.append(f"Mensagem: {p.get('link_chat_id')} / {p.get('link_msg_id')}")
+        lines.append("")
+        lines.append("Atenção: vai remover TODAS as reactions, inclusive as do próprio bot (🔥/❤/🏆 dos cards).")
+    elif action == "rmod_mute_react":
+        lines.append(f"Grupo: {session.selected_chat_id}")
+        lines.append(f"Alvo: {p.get('target_label')} ({p.get('target_user_id')})")
+        lines.append(f"Duração: {p.get('duration_label')}")
+        lines.append("")
+        lines.append("Apenas a permissão de reagir será alterada. Outras permissões serão preservadas.")
+    lines.append("")
+    lines.append("Confirme para prosseguir ou cancele para abandonar.")
+    return "\n".join(lines)
 
 
 def _logs_text() -> str:
@@ -407,6 +447,68 @@ async def tigrao_private_text(message: Message) -> None:
         session.waiting_for = None
         touch_session()  # Sprint 7 (T01-fix): refresh updated_at em transition
         await message.answer(_confirm_text(), reply_markup=confirm_keyboard())
+        return
+
+    # Sprint X1 (TR3): Reaction Moderation — handlers de texto
+    if session.waiting_for == "rmod_link":
+        try:
+            link_chat_id, link_msg_id = parse_message_link(message.text or "")
+        except ValueError as exc:
+            await message.answer(error_text("Link inválido", str(exc), "Cole um link de mensagem do Telegram (t.me/grupo/123 ou t.me/c/123/456)."))
+            return
+        session.payload["link_chat_id"] = link_chat_id
+        session.payload["link_msg_id"] = link_msg_id
+        if session.selected_action == "rmod_del_one":
+            session.waiting_for = "rmod_emoji"
+            touch_session()
+            await message.answer(
+                "Tigrão — apagar 1 reaction\n\n"
+                f"Mensagem: {link_chat_id} / {link_msg_id}\n\n"
+                "Envie agora o emoji da reaction que deve ser apagada (ex: 💩, ❤, 🔥).\n\n"
+                "Atenção: a API pode permitir apagar apenas reactions setadas pelo próprio bot."
+            )
+            return
+        # rmod_del_all
+        session.waiting_for = None
+        touch_session()
+        await message.answer(_rmod_confirm_text(), reply_markup=rmod_confirm_keyboard())
+        return
+
+    if session.waiting_for == "rmod_emoji":
+        emoji = (message.text or "").strip()
+        if not emoji or len(emoji) > 16:
+            await message.answer(error_text("Emoji inválido", "Envie 1 emoji curto.", "Exemplo: 💩 ou ❤"))
+            return
+        session.payload["emoji"] = emoji
+        session.waiting_for = None
+        touch_session()
+        await message.answer(_rmod_confirm_text(), reply_markup=rmod_confirm_keyboard())
+        return
+
+    if session.waiting_for == "rmod_user":
+        try:
+            target_user_id, target_label = await resolve_user_target(message.bot, message.text or "")
+        except ValueError as exc:
+            await message.answer(error_text("Entrada inválida", str(exc), "Envie user_id numérico ou @username."))
+            return
+        except RuntimeError as exc:
+            await message.answer(error_text("Não foi possível resolver", str(exc), "Confira o @username ou use o user_id numérico."))
+            return
+        # Hard-block OWNER_ID
+        if target_user_id == OWNER_ID:
+            await message.answer(error_text("Operação bloqueada", "Você não pode se silenciar.", "Cancele e escolha outro alvo."))
+            return
+        session.payload["target_user_id"] = target_user_id
+        session.payload["target_label"] = target_label
+        session.waiting_for = None
+        touch_session()
+        await message.answer(
+            "Tigrão — duração do silêncio de reactions\n\n"
+            f"Grupo: {session.selected_chat_id}\n"
+            f"Alvo: {target_label} ({target_user_id})\n\n"
+            "Escolha por quanto tempo o alvo ficará sem poder reagir.",
+            reply_markup=rmod_duration_keyboard(),
+        )
         return
 
 
@@ -831,6 +933,220 @@ async def tigrao_ddx(callback: CallbackQuery) -> None:
 @router.callback_query(F.data.in_({"tigrao:logs", "tigrao:logs:refresh"}))
 async def tigrao_logs(callback: CallbackQuery) -> None:
     await _edit_private_panel(callback, _logs_text(), logs_keyboard())
+
+
+# Sprint X1 (TR3): Reaction Moderation — callbacks
+@router.callback_query(F.data == "tigrao:rmod")
+async def tigrao_rmod(callback: CallbackQuery) -> None:
+    await _edit_private_panel(
+        callback,
+        _section_text(
+            "moderar reactions",
+            "Apague reactions individuais ou todas de uma mensagem, ou silencie quem reagiu.\n"
+            "Apagar não precisa de grupo selecionado (o link já tem o chat).\n"
+            "Silenciar precisa de grupo selecionado e do user_id ou @username.",
+        ),
+        reactions_mod_keyboard(),
+    )
+
+
+@router.callback_query(F.data == "tigrao:rmod:del_one")
+async def tigrao_rmod_del_one(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    set_action("rmod_del_one", waiting_for="rmod_link")
+    if callback.message:
+        await callback.message.edit_text(
+            "Tigrão — apagar 1 reaction\n\n"
+            "Cole agora o link da mensagem.\n\n"
+            "Exemplos:\n"
+            "https://t.me/c/1234567890/55\n"
+            "https://t.me/nomedogrupo/55"
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tigrao:rmod:del_all")
+async def tigrao_rmod_del_all(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    set_action("rmod_del_all", waiting_for="rmod_link")
+    if callback.message:
+        await callback.message.edit_text(
+            "Tigrão — apagar TODAS reactions\n\n"
+            "Cole agora o link da mensagem.\n\n"
+            "Atenção: vai remover todas as reactions, inclusive as do próprio bot."
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tigrao:rmod:mute_react")
+async def tigrao_rmod_mute_react(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    session = get_session()
+    if not session.selected_chat_id:
+        if callback.message:
+            await callback.message.edit_text(_need_group_text(), reply_markup=home_keyboard())
+        await callback.answer()
+        return
+    set_action("rmod_mute_react", waiting_for="rmod_user")
+    if callback.message:
+        await callback.message.edit_text(
+            "Tigrão — silenciar reactor\n\n"
+            f"Grupo: {session.selected_chat_id}\n\n"
+            "Envie agora o user_id numérico OU @username do alvo.\n"
+            "Apenas a permissão de reagir será removida; o resto fica preservado."
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("tigrao:rmod:dur:"))
+async def tigrao_rmod_duration(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    session = get_session()
+    if session.selected_action != "rmod_mute_react":
+        await callback.answer("Fluxo inválido.", show_alert=True)
+        return
+    raw = (callback.data or "").rsplit(":", 1)[-1]
+    try:
+        duration = parse_duration(raw)
+    except ValueError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    session.payload["duration"] = duration
+    session.payload["duration_label"] = raw
+    touch_session()
+    if callback.message:
+        await callback.message.edit_text(_rmod_confirm_text(), reply_markup=rmod_confirm_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tigrao:rmod:cancel")
+async def tigrao_rmod_cancel(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    clear_action()
+    if callback.message:
+        await callback.message.edit_text(
+            "Tigrão — moderação de reactions cancelada.",
+            reply_markup=reactions_mod_keyboard(),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tigrao:rmod:confirm")
+async def tigrao_rmod_confirm(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    session = get_session()
+    action = session.selected_action or ""
+    p = dict(session.payload)
+    bot = callback.bot
+
+    if action not in {"rmod_del_one", "rmod_del_all", "rmod_mute_react"}:
+        await callback.answer("Fluxo inválido.", show_alert=True)
+        return
+
+    await callback.answer("Executando ação...")
+    if callback.message:
+        await callback.message.edit_text(
+            f"Tigrão — executando {ACTION_LABELS.get(action, action)}...",
+            reply_markup=None,
+        )
+
+    chat_id_for_log: int | None = None
+    target_for_log: int | None = None
+
+    try:
+        if action == "rmod_del_one":
+            link_chat_id = p.get("link_chat_id")
+            link_msg_id = p.get("link_msg_id")
+            emoji = p.get("emoji")
+            if link_chat_id is None or link_msg_id is None or not emoji:
+                raise RuntimeError("dados incompletos no payload")
+            chat_id_for_log = link_chat_id if isinstance(link_chat_id, int) else None
+            await delete_message_reaction(bot, link_chat_id, int(link_msg_id), str(emoji))
+            details = f"Mensagem: {link_chat_id} / {link_msg_id}\nEmoji removido: {emoji}"
+            title = "Reaction removida"
+
+        elif action == "rmod_del_all":
+            link_chat_id = p.get("link_chat_id")
+            link_msg_id = p.get("link_msg_id")
+            if link_chat_id is None or link_msg_id is None:
+                raise RuntimeError("dados incompletos no payload")
+            chat_id_for_log = link_chat_id if isinstance(link_chat_id, int) else None
+            await delete_all_message_reactions(bot, link_chat_id, int(link_msg_id))
+            details = f"Mensagem: {link_chat_id} / {link_msg_id}\nTodas as reactions removidas"
+            title = "Todas reactions removidas"
+
+        else:  # rmod_mute_react
+            chat_id = session.selected_chat_id
+            target_user_id = p.get("target_user_id")
+            duration = p.get("duration")
+            if not chat_id or target_user_id is None or duration is None:
+                raise RuntimeError("dados incompletos no payload")
+            chat_id_for_log = int(chat_id)
+            target_for_log = int(target_user_id)
+            await mute_reactions(bot, int(chat_id), int(target_user_id), duration)
+            details = (
+                f"Grupo: {chat_id}\n"
+                f"Alvo: {p.get('target_label')} ({target_user_id})\n"
+                f"Duração: {p.get('duration_label')}\n"
+                "Permissão de reagir removida (outras permissões preservadas)."
+            )
+            title = "Reactor silenciado"
+
+        log_action(chat_id=chat_id_for_log, action=action, target_user_id=target_for_log, status="success")
+        clear_action()
+        if callback.message:
+            await callback.message.edit_text(
+                success_text(title, details),
+                reply_markup=reactions_mod_keyboard(),
+            )
+
+    except TelegramForbiddenError as exc:
+        log_action(chat_id=chat_id_for_log, action=action, target_user_id=target_for_log,
+                   status="error", error_type=type(exc).__name__, error_message=str(exc))
+        clear_action()
+        if callback.message:
+            await callback.message.edit_text(
+                error_text(
+                    "Permissão insuficiente",
+                    f"O Telegram recusou a ação. Erro: {type(exc).__name__}: {exc}",
+                    "Confira se o bot é administrador e tem can_delete_messages / can_restrict_members.",
+                ),
+                reply_markup=reactions_mod_keyboard(),
+            )
+    except TelegramBadRequest as exc:
+        log_action(chat_id=chat_id_for_log, action=action, target_user_id=target_for_log,
+                   status="error", error_type=type(exc).__name__, error_message=str(exc))
+        clear_action()
+        if callback.message:
+            await callback.message.edit_text(
+                error_text(
+                    "Telegram recusou a operação",
+                    f"{type(exc).__name__}: {exc}",
+                    "Possíveis causas: mensagem não existe, reaction já removida, user não está no grupo, ou método não suportado para reactions de terceiros.",
+                ),
+                reply_markup=reactions_mod_keyboard(),
+            )
+    except Exception as exc:
+        log_action(chat_id=chat_id_for_log, action=action, target_user_id=target_for_log,
+                   status="error", error_type=type(exc).__name__, error_message=str(exc))
+        clear_action()
+        if callback.message:
+            await callback.message.edit_text(
+                error_text("Falha ao executar", f"{type(exc).__name__}: {exc}", "Confira o link/alvo e as permissões do bot."),
+                reply_markup=reactions_mod_keyboard(),
+            )
 
 
 @router.callback_query(F.data == "tigrao:close")

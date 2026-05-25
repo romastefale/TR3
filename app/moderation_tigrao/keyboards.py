@@ -26,8 +26,39 @@ def home_keyboard() -> InlineKeyboardMarkup:
             [_button("Escolher grupo", "tigrao:groups", "primary")],
             [_button("Ações de usuário", "tigrao:user_actions", "primary"), _button("Links", "tigrao:links", "primary")],
             [_button("Filtros DDX", "tigrao:ddx", "primary"), _button("Mensagens", "tigrao:messages", "primary")],
+            [_button("Moderar Reactions", "tigrao:rmod", "primary")],
             [_button("Personalização", "tigrao:customize", "primary"), _button("Logs", "tigrao:logs", "primary")],
             [_button("Fechar", "tigrao:close", "danger")],
+        ]
+    )
+
+
+def reactions_mod_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [_button("Apagar 1 reaction", "tigrao:rmod:del_one", "danger")],
+        [_button("Apagar TODAS reactions", "tigrao:rmod:del_all", "danger")],
+        [_button("Silenciar reactor", "tigrao:rmod:mute_react", "danger")],
+    ]
+    rows.extend(_back_close_rows())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def rmod_duration_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [_button("10 min", "tigrao:rmod:dur:10m", "primary"), _button("1 hora", "tigrao:rmod:dur:1h", "primary")],
+        [_button("6 horas", "tigrao:rmod:dur:6h", "primary"), _button("24 horas", "tigrao:rmod:dur:24h", "primary")],
+        [_button("7 dias", "tigrao:rmod:dur:7d", "primary"), _button("Indefinido", "tigrao:rmod:dur:i", "danger")],
+        [_button("Cancelar", "tigrao:rmod:cancel", "danger")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def rmod_confirm_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [_button("Confirmar", "tigrao:rmod:confirm", "success")],
+            [_button("Cancelar", "tigrao:rmod:cancel", "danger")],
+            [_button("Voltar", "tigrao:rmod", "primary")],
         ]
     )
 
