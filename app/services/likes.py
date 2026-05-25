@@ -162,6 +162,12 @@ class LikesService:
     ) -> bool:
         with self._new_session() as db:
             try:
+                # Sprint 6: lock pessimista no SELECT pra eliminar race em
+                # double-click no botão de like. Antes, 2 cliques rápidos
+                # podiam ler `liked=1` ao mesmo tempo e ambos virar pra 0
+                # (toggle perdido). Postgres aplica FOR UPDATE; SQLite
+                # (dev) ignora silenciosamente, mas dev é single-process
+                # então não há race real lá.
                 existing = db.execute(
                     select(TrackLike)
                     .where(
@@ -171,6 +177,7 @@ class LikesService:
                     )
                     .order_by(TrackLike.id.asc())
                     .limit(1)
+                    .with_for_update()
                 ).scalar_one_or_none()
                 if existing:
                     current_liked = 1 if existing.liked is None else int(existing.liked)

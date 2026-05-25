@@ -22,6 +22,11 @@ class BtbSession:
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+# Singleton global por design: todos os entry points do BTB checam
+# `is_owner_private_message` (OWNER_ID em DM), então o "estado" só existe
+# pra um único usuário humano de cada vez. NÃO refatorar pra dict por
+# user_id sem antes mudar o modelo de permissão. Sprint 6 (TR3) revisou
+# e confirmou: zero risco prático de state leak.
 _session = BtbSession()
 
 
