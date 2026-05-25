@@ -6,6 +6,8 @@ from fastapi import FastAPI, Request
 from sqlalchemy import text
 
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from aiogram.types import Update
 
 from app.bot.monthfm import monthfm as monthfm_command, router as monthfm_router
@@ -312,7 +314,14 @@ async def on_startup() -> None:
             )
         )
     if TELEGRAM_BOT_TOKEN:
-        bot = Bot(token=TELEGRAM_BOT_TOKEN)
+        # S4: DefaultBotProperties define parse_mode HTML como padrão. Os
+        # handlers continuam passando parse_mode="HTML" explicitamente (são
+        # redundantes mas inofensivos) — a melhoria principal é eliminar a
+        # chance de esquecer parse_mode num novo handler.
+        bot = Bot(
+            token=TELEGRAM_BOT_TOKEN,
+            default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        )
         if not _telegram_dispatcher_configured:
             dispatcher.include_router(tigrao_ddx_router)
             dispatcher.include_router(tigrao_customize_router)

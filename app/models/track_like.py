@@ -8,8 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column
 from app.db.database import Base
 
 
-def _utcnow_naive() -> datetime:
-    return datetime.now(timezone.utc).replace(tzinfo=None)
+from app.utils.datetime import utcnow_naive as _utcnow_naive  # noqa: F401
 
 
 class TrackLike(Base):

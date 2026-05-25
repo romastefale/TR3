@@ -16,7 +16,8 @@ from aiogram.types import (
 )
 
 from app.bot.intent import detect_intent
-from app.config.settings import LASTFM_API_KEY, OWNER_ID
+from app.bot.filters import IsOwner
+from app.config.settings import LASTFM_API_KEY
 from app.services.connection_check import connect_hint_for, is_user_connected
 from app.services.lastfm import lastfm_service
 from app.services.likes import likes_service
@@ -235,11 +236,10 @@ def _register_handlers(dp: Dispatcher) -> None:
             parse_mode="HTML",
         )
 
-    @dp.message(Command("hidden"))
+    @dp.message(Command("hidden"), IsOwner())
     async def hidden_command(message: Message) -> None:
-        # OWNER-only e silencioso pra outros (mesmo padrão de /manual, /kingplay, /debuguser).
-        if not message.from_user or message.from_user.id != OWNER_ID:
-            return
+        # S3: OWNER-only via filter IsOwner (silencioso pra não-owners).
+        # Mesmo padrão de /manual, /kingplay, /debuguser.
         await message.answer(
             "<b>🔒 COMANDOS OCULTOS</b> — só você (dono) vê isso\n\n"
             "— SPOTIFY (uso restrito, &lt;5 pessoas) —\n\n"
@@ -384,12 +384,10 @@ def _register_handlers(dp: Dispatcher) -> None:
             return
         await message.answer(head, parse_mode="HTML")
 
-    @dp.message(Command("manual"))
+    @dp.message(Command("manual"), IsOwner())
     async def manual(message: Message) -> None:
         # Comando de dono: cadastra outra pessoa no Last.fm.
-        # Sem hipótese: só o OWNER_ID pode rodar; qualquer outro é ignorado em silêncio.
-        if not message.from_user or message.from_user.id != OWNER_ID:
-            return
+        # S3: OWNER-only via filter IsOwner (silencioso pra não-owners).
         parts = (message.text or "").split()
         if len(parts) < 3:
             await message.answer(

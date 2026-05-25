@@ -21,6 +21,7 @@ from app.config.settings import (
 )
 from app.db.database import SessionLocal
 from app.models.spotify_token import SpotifyToken
+from app.utils.datetime import utcnow_naive as _utcnow_naive
 
 logger = logging.getLogger(__name__)
 
@@ -34,12 +35,6 @@ _TRACK_SEARCH_TTL_MISS = timedelta(hours=2)
 # user_id de outra pessoa (account-hijack via state guessing).
 _STATE_TTL_SECONDS = 600
 _STATE_SIG_LEN = 16
-
-
-def _utcnow_naive() -> datetime:
-    """UTC naive equivalente a datetime.utcnow() (deprecated em 3.12)
-    sem mudar a semântica/legado dos datetimes armazenados no DB."""
-    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 def _state_secret() -> bytes | None:

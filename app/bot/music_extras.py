@@ -9,7 +9,7 @@ from aiogram.filters import Command
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import text
 
-from app.config.settings import OWNER_ID
+from app.bot.filters import IsOwner
 from app.db.database import SessionLocal
 from app.moderation_tigrao.storage import list_groups
 from app.services.likes import likes_service
@@ -378,10 +378,9 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
                 pass
         await query.answer()
 
-    @dp.message(Command("kingplay"))
+    @dp.message(Command("kingplay"), IsOwner())
     async def kingplay(message: Message) -> None:
-        if not message.from_user or message.from_user.id != OWNER_ID:
-            return
+        # S3: OWNER-only via filter IsOwner.
         parts = (message.text or "").splitlines()
         if len(parts) >= 2:
             try:
@@ -398,11 +397,9 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
             return
         await message.answer("Kingplay — escolha o grupo:", reply_markup=_kingplay_groups_keyboard())
 
-    @dp.callback_query(F.data.startswith("kingplay:send:"))
+    @dp.callback_query(F.data.startswith("kingplay:send:"), IsOwner())
     async def kingplay_send_callback(query: CallbackQuery) -> None:
-        if not query.from_user or query.from_user.id != OWNER_ID:
-            await query.answer("Acesso negado.", show_alert=True)
-            return
+        # S3: OWNER-only via filter IsOwner (silencioso — não-owners não veem nada).
         if not query.message or not query.data:
             await query.answer()
             return
@@ -414,19 +411,16 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
         await query.answer("Enviando...")
         await _send_kingplay(query.message, target_chat_id, query.from_user.id, query.from_user.full_name)
 
-    @dp.callback_query(F.data == "kingplay:close")
+    @dp.callback_query(F.data == "kingplay:close", IsOwner())
     async def kingplay_close_callback(query: CallbackQuery) -> None:
-        if not query.from_user or query.from_user.id != OWNER_ID:
-            await query.answer("Acesso negado.", show_alert=True)
-            return
+        # S3: OWNER-only via filter IsOwner.
         if query.message:
             await query.message.edit_text("Kingplay fechado.")
         await query.answer()
 
-    @dp.message(Command("debuguser"))
+    @dp.message(Command("debuguser"), IsOwner())
     async def debug_user(message: Message) -> None:
-        if not message.from_user or message.from_user.id != OWNER_ID:
-            return
+        # S3: OWNER-only via filter IsOwner.
         parts = (message.text or "").split(maxsplit=1)
         if len(parts) < 2:
             await message.answer("Uso: /debuguser <user_id>")
