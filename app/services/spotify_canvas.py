@@ -254,11 +254,18 @@ class SpotifyCanvasService:
                         "Spotify Canvas via PROXY: track_id=%s", clean_track_id
                     )
 
-                # CAMADA 2: Spotify direto via cookie sp_dc OU TOTP.
-                # Só aciona quando o proxy não achou. Em IP bloqueado dá 403
-                # e entra em backoff de 10min — não tenta de novo por 10min.
-                # Com sp_dc configurado, ~99% de hit aqui.
-                if canvas_url is None and time.time() >= self._token_blocked_until:
+                # CAMADA 2: Spotify direto via cookie sp_dc — opt-in puro.
+                # Verificado ao vivo em 2026: tokens anônimos (sem cookie)
+                # passam pela autenticação mas o canvaz-cache retorna 3 bytes
+                # vazios pra TODAS as tracks. Spotify enforça server-side que
+                # canvases só vem em sessão autenticada. Por isso só vale a
+                # pena chamar essa camada quando o cookie está configurado —
+                # senão é round-trip de rede pra resposta garantidamente vazia.
+                if (
+                    canvas_url is None
+                    and SPOTIFY_CANVAS_SP_DC
+                    and time.time() >= self._token_blocked_until
+                ):
                     token = await self._get_access_token()
                     if token:
                         canvas_url = await self._fetch_canvas_url(clean_track_id, token)
@@ -267,11 +274,10 @@ class SpotifyCanvasService:
                                 "Spotify Canvas via TOKEN_DIRECT: track_id=%s",
                                 clean_track_id,
                             )
-                        elif SPOTIFY_CANVAS_SP_DC:
-                            # Só conta como "Spotify oficial disse não" se a gente
-                            # mandou o cookie sp_dc. Sem cookie o token é anônimo
-                            # e a resposta vem vazia pra TUDO — não pode virar
-                            # cache autoritativo de 24h ou envenena o cache.
+                        else:
+                            # Cookie sp_dc presente + token válido + canvas vazio
+                            # = Spotify oficial confirmou que essa track não tem
+                            # canvas. Pode cachear como negativo autoritativo 24h.
                             negative_is_authoritative = True
 
                 # Decide TTL do cache:
