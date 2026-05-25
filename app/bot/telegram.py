@@ -756,10 +756,12 @@ def _register_handlers(dp: Dispatcher) -> None:
                 event.chat.id, event.message_id, event.user.id,
             )
 
-    @dp.inline_query()
+    # Sprint X9: filter explícito limita este handler a query=="playing".
+    # Sem o filter, queries de outros handlers (ex: X9 owner-only com
+    # `<chat_id> <user_id>`) batem aqui primeiro no root e o `return` cedo
+    # marca como handled, abortando propagação pros sub-routers.
+    @dp.inline_query(lambda q: (q.query or "").strip().lower() == "playing")
     async def inline_play(query: InlineQuery) -> None:
-        if (query.query or "").strip().lower() != "playing":
-            return
         track = await music_service.get_current_or_last_played(query.from_user.id)
         if not track:
             await query.answer([], cache_time=1, is_personal=True)

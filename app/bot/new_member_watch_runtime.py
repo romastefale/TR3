@@ -203,6 +203,16 @@ async def tigrao_new_member_watch_preprocess_update(bot, update) -> bool:
             return False
         if message.from_user.id == OWNER_ID:
             return False
+        # Sprint X9 (S2): self-bot whitelist. Sem isso, msgs postadas pelo
+        # próprio bot (ex: confirmação esteganográfica X9, ou qualquer
+        # send_message com link) podem disparar alerta de "membro novo
+        # postou link". get_me() é cacheado pelo aiogram após a 1ª chamada.
+        try:
+            me = await bot.get_me()
+            if message.from_user.id == me.id:
+                return False
+        except Exception:
+            pass
         if not _has_link(message):
             return False
 
