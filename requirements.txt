@@ -5,3 +5,4 @@ SQLAlchemy==2.0.41
 uvicorn==0.35.0
 Pillow==11.3.0
 playwright==1.56.0
+pyotp==2.9.0

@@ -6,6 +6,7 @@ import re
 import time
 
 import httpx
+import pyotp
 
 from app.config.settings import (
     SPOTIFY_CANVAS_ENABLED,
@@ -20,6 +21,13 @@ CANVAS_TOKEN_TTL_SECONDS = 50 * 60
 # Canvas URL pra um track muda raramente; 24h de cache reduz drasticamente
 # o tráfego pro canvaz-cache mas ainda permite refresh diário.
 CANVAS_URL_CACHE_TTL_SECONDS = 24 * 3600
+# Cache curto pra "miss confiável" (canvasdownloader retornou página
+# "Canvas not found"). Como o proxy dá MUITO false negative, não pode
+# cachear 24h — em 1h tentamos de novo (incluindo via TOTP/sp_dc).
+CANVAS_URL_NEGATIVE_TTL_SECONDS = 1 * 3600
+# Quando o endpoint de token do Spotify devolve 403 (IP bloqueado), não
+# vale a pena retentar a cada request — ficamos em backoff por 10min.
+CANVAS_TOKEN_BACKOFF_SECONDS = 10 * 60
 # Canvas é vertical 720x1280 H.264, raramente passa de 2MB. 8MB já é teto
 # bem folgado — qualquer coisa maior é provavelmente bug e a gente aborta.
 CANVAS_DOWNLOAD_MAX_BYTES = 8 * 1024 * 1024
@@ -35,6 +43,21 @@ CANVAS_TOKEN_URL_ANON = "https://open.spotify.com/get_access_token?reason=transp
 CANVAS_TOKEN_URL_COOKIE = "https://open.spotify.com/api/token?reason=transport&productType=web_player"
 CANVAS_API_URL = "https://spclient.wg.spotify.com/canvaz-cache/v0/canvases"
 CANVAS_URL_RE = re.compile(rb"https://canvaz\.scdn\.co/[^\x00\s\"'<>]+")
+
+# Método TOTP (introduzido pelo Spotify em 2024 pro endpoint anônimo).
+# Secret + clientId rotacionam ~6 meses. Fonte: glomatico/votify, KraXen72,
+# spotify-aac-downloader. Se quebrar (token 400 ou 401 ao invés de 403),
+# checar repos pra valor atualizado. 403 = bloqueio de IP (não secret errado).
+SPOTIFY_TOTP_CANDIDATES: list[tuple[str, str]] = [
+    # (secret_base32, clientId) — tentamos em ordem; primeiro que der 200 vence.
+    ("S7YF4O6G6SJS6Y2I", "764836690740445fb56501729424e8c1"),
+    ("GU2TANZRGQ2TQNJTGQ4DONBZGM2DMNTYME3DKMTYGY2DOMTSGE", "650271733a5c4c578ed18d0981977df2"),
+]
+CANVAS_TOKEN_URL_TOTP_TEMPLATE = (
+    "https://open.spotify.com/get_access_token?"
+    "reason=transport&productType=web_player&"
+    "totp={totp}&totpVer=2&ts={ts}&clientId={client_id}"
+)
 
 # Proxy terceirizado: canvasdownloader.com já tem IP residencial / parceria
 # com o Spotify pra atravessar o bloqueio de datacenter. Devolve HTML com
@@ -60,6 +83,11 @@ CANVASDOWNLOADER_HEADERS = {
     "Accept-Language": "en-US,en;q=0.9,pt-BR;q=0.8",
     "Referer": "https://www.canvasdownloader.com/",
 }
+# Marker que o canvasdownloader.com cospe quando ele NÃO acha o Canvas.
+# Validado ao vivo: várias músicas populares (Blinding Lights etc) caem nessa
+# página mesmo tendo Canvas no app — false negative. Por isso o cache pra
+# "miss" do proxy é curto (1h) e a gente tenta camadas seguintes.
+CANVASDOWNLOADER_NOT_FOUND_MARKER = "Canvas not found"
 TOKEN_HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
@@ -169,6 +197,9 @@ class SpotifyCanvasService:
         self._token: str | None = None
         self._token_expires_at: float = 0.0
         self._token_lock = asyncio.Lock()
+        # Backoff: se o endpoint de token retorna 403 (IP bloqueado), evita
+        # martelar — ficamos em "modo desistir" por CANVAS_TOKEN_BACKOFF_SECONDS.
+        self._token_blocked_until: float = 0.0
         # Cache de URL por track_id; armazena `None` como cache negativo pra
         # não martelar o canvaz-cache em músicas que sabidamente não têm Canvas.
         self._url_cache: dict[str, tuple[str | None, float]] = {}
@@ -196,51 +227,82 @@ class SpotifyCanvasService:
             if cached is not None and now < cached[1]:
                 return cached[0]
             try:
-                # CAMINHO PRIMÁRIO: canvasdownloader.com (passa por Railway).
-                # Não exige token, sp_dc, nem TOTP — terceiriza o problema do
-                # bloqueio de datacenter pra um proxy que tem IP/parceria boa.
-                canvas_url = await self._fetch_via_canvasdownloader(clean_track_id)
+                canvas_url: str | None = None
+                # Marca se a resposta negativa veio de uma fonte confiável
+                # (Spotify oficial via token válido) — aí cacheia por 24h.
+                # Senão, cacheia só 1h pra dar chance de tentar de novo logo.
+                negative_is_authoritative = False
 
-                # FALLBACK (opcional): caminho direto pelo Spotify, só se o
-                # owner explicitamente configurou um sp_dc cookie. Sem cookie,
-                # esse caminho falha em datacenter — nem tenta. Quando o
-                # canvasdownloader cair, esse pode salvar o dia se o cookie
-                # estiver setado.
-                if canvas_url is None and SPOTIFY_CANVAS_SP_DC:
-                    logger.info(
-                        "Spotify Canvas: canvasdownloader miss, tentando caminho direto (sp_dc)"
+                # CAMADA 1: Spotify direto via TOTP (sem cookie).
+                # Em IPs que o Cloudflare libera, funciona out-of-the-box e
+                # tem ~99% de hit rate (API oficial). Em IPs bloqueados, dá
+                # 403 e entra em backoff — não tenta de novo por 10min.
+                if time.time() >= self._token_blocked_until:
+                    token = await self._get_access_token()
+                    if token:
+                        canvas_url = await self._fetch_canvas_url(clean_track_id, token)
+                        if canvas_url:
+                            logger.info(
+                                "Spotify Canvas via TOKEN_DIRECT: track_id=%s", clean_track_id
+                            )
+                        else:
+                            # Spotify oficial disse "sem canvas" → confiável.
+                            negative_is_authoritative = True
+
+                # CAMADA 2: canvasdownloader.com (proxy terceirizado).
+                # Pega tracks que o caminho direto não conseguiu (IP bloqueado
+                # ou Spotify devolveu vazio por motivo desconhecido). Tem
+                # MUITO false negative — por isso "miss" dele não é confiável.
+                if canvas_url is None:
+                    canvas_url, proxy_definitive = await self._fetch_via_canvasdownloader(
+                        clean_track_id
                     )
-                    access_token = await self._get_access_token()
-                    if access_token:
-                        canvas_url = await self._fetch_canvas_url(clean_track_id, access_token)
+                    if canvas_url:
+                        logger.info(
+                            "Spotify Canvas via PROXY: track_id=%s", clean_track_id
+                        )
+                    elif proxy_definitive:
+                        # Proxy confirmou "Canvas not found" — mas como ele
+                        # mente bastante, ainda não consideramos autoritativo.
+                        pass
 
-                if canvas_url:
-                    logger.info("Spotify Canvas found: track_id=%s", clean_track_id)
-                else:
-                    logger.info("Spotify Canvas not found: track_id=%s", clean_track_id)
-                # Cacheia resultado (positivo OU negativo) com TTL.
-                # Negativo evita martelar canvasdownloader em faixas sem Canvas.
-                self._url_cache[clean_track_id] = (canvas_url, now + CANVAS_URL_CACHE_TTL_SECONDS)
+                # Decide TTL do cache:
+                # - Positivo: 24h (Canvas URLs são estáveis)
+                # - Negativo confiável (Spotify direto disse não): 24h
+                # - Negativo não-confiável (só o proxy/falha): 1h pra retry
+                ttl = (
+                    CANVAS_URL_CACHE_TTL_SECONDS
+                    if canvas_url or negative_is_authoritative
+                    else CANVAS_URL_NEGATIVE_TTL_SECONDS
+                )
+                if not canvas_url:
+                    logger.info(
+                        "Spotify Canvas NOT FOUND: track_id=%s (cache_ttl=%ss authoritative=%s)",
+                        clean_track_id,
+                        ttl,
+                        negative_is_authoritative,
+                    )
+                self._url_cache[clean_track_id] = (canvas_url, time.time() + ttl)
                 return canvas_url
             except Exception:
                 logger.exception("Spotify Canvas lookup failed: track_id=%s", clean_track_id)
                 return None
 
-    async def _fetch_via_canvasdownloader(self, track_id: str) -> str | None:
+    async def _fetch_via_canvasdownloader(
+        self, track_id: str
+    ) -> tuple[str | None, bool]:
         """Resolve Canvas URL via canvasdownloader.com (proxy terceirizado).
 
-        O site faz a chamada autenticada ao Spotify do lado dele e devolve
-        HTML com <video src="https://canvaz.scdn.co/...">. A gente regexa
-        o src e devolve. Falhas são logadas como WARN (não exception)
-        porque é caminho esperado falhar às vezes — chamador cai pro
-        próximo fallback ou pro /playing.
+        Retorna (url, definitivo_negativo). O segundo bool indica se o proxy
+        explicitamente disse "Canvas not found" (página com marker). Mesmo
+        assim NÃO é autoritativo — o proxy dá MUITO false negative em
+        músicas populares (Blinding Lights, Call Me Maybe testadas). Só
+        ajuda a distinguir "erro de rede" de "proxy respondeu não".
 
         Segurança:
         - Só passa o track_id público (mesmo dado da URL do Spotify)
-        - Não envia user_id, token, ou qualquer info do nosso bot
-        - URL extraída é validada em download_canvas_bytes (SSRF guard
-          já existente: só aceita canvaz.scdn.co)
-        - Timeout curto (8s) — se o site travar, fail fast
+        - URL extraída é revalidada no download_canvas_bytes (SSRF guard)
+        - Timeout fail-fast 8s
         """
         track_url = f"https://open.spotify.com/track/{track_id}"
         try:
@@ -256,30 +318,29 @@ class SpotifyCanvasService:
             logger.warning(
                 "Canvas proxy request error: track_id=%s", track_id, exc_info=True
             )
-            return None
+            return None, False
         if response.status_code != 200:
             logger.warning(
                 "Canvas proxy non-200: track_id=%s status=%s",
                 track_id,
                 response.status_code,
             )
-            return None
-        # Reusa o regex já compilado pro CDN oficial — qualquer URL no HTML
-        # que aponte pro canvaz.scdn.co é o que a gente quer. Se o site
-        # mudar a estrutura, o regex continua funcionando enquanto a URL
-        # do CDN aparecer em algum lugar.
+            return None, False
         match = CANVAS_URL_RE.search(response.content)
-        if not match:
-            logger.info(
-                "Canvas proxy: HTML sem URL do CDN (provavelmente sem Canvas) track_id=%s",
-                track_id,
-            )
-            return None
-        try:
-            return match.group(0).decode()
-        except UnicodeDecodeError:
-            logger.warning("Canvas proxy: URL não-utf8 track_id=%s", track_id)
-            return None
+        if match:
+            try:
+                return match.group(0).decode(), False
+            except UnicodeDecodeError:
+                logger.warning("Canvas proxy: URL não-utf8 track_id=%s", track_id)
+                return None, False
+        # Detecta a página "Canvas not found" do proxy.
+        is_not_found = CANVASDOWNLOADER_NOT_FOUND_MARKER in response.text
+        logger.info(
+            "Canvas proxy MISS: track_id=%s proxy_says_not_found=%s",
+            track_id,
+            is_not_found,
+        )
+        return None, is_not_found
 
     async def download_canvas_bytes(self, url: str) -> bytes | None:
         """Baixa o vídeo Canvas pra memória, com teto de tamanho.
@@ -334,19 +395,72 @@ class SpotifyCanvasService:
             return token
 
     async def _fetch_access_token(self) -> str | None:
-        """Tenta cookie sp_dc primeiro (se configurado), cai pra anônimo.
+        """Cascata de aquisição de token (do mais robusto pro mais frágil):
 
-        Em IPs de datacenter (Railway), o caminho anônimo retorna
-        `403 URL Blocked` da camada upstream — daí a prioridade do cookie.
+        1. sp_dc cookie (se configurado) — atravessa bloqueio de datacenter,
+           ~99% de sucesso. Cookie dura ~1 ano.
+        2. TOTP (novo método 2024+) — funciona em janelas que o Cloudflare
+           libera; sem cookie, sem credencial. Em IP bloqueado dá 403 e
+           a gente ativa backoff de 10min.
+        3. Anônimo legacy — quase sempre 403 desde 2024, mantido por
+           compat caso o Spotify reverta.
+
+        Se TODAS as tentativas resultarem em 403, ativa backoff pra não
+        martelar o endpoint até a próxima janela.
         """
         if SPOTIFY_CANVAS_SP_DC:
             token = await self._fetch_token_with_cookie()
             if token:
                 return token
             logger.warning(
-                "Spotify Canvas: sp_dc fallback acionado — cookie pode estar expirado/inválido"
+                "Spotify Canvas: sp_dc não devolveu token (cookie expirado/inválido)"
             )
+
+        # TOTP: tenta cada candidato (secret, clientId).
+        for secret, client_id in SPOTIFY_TOTP_CANDIDATES:
+            token, was_blocked = await self._fetch_token_totp(secret, client_id)
+            if token:
+                return token
+            if was_blocked:
+                # 403 do upstream: outros candidatos vão dar igual, e o
+                # legacy também. Ativa backoff e desiste por enquanto.
+                self._token_blocked_until = time.time() + CANVAS_TOKEN_BACKOFF_SECONDS
+                logger.warning(
+                    "Spotify Canvas token endpoint BLOCKED (datacenter IP). "
+                    "Backoff %ss. Configure SPOTIFY_CANVAS_SP_DC pra 99%% hit rate.",
+                    CANVAS_TOKEN_BACKOFF_SECONDS,
+                )
+                return None
+
+        # Último recurso: anônimo legacy.
         return await self._fetch_token_anonymous()
+
+    async def _fetch_token_totp(
+        self, secret: str, client_id: str
+    ) -> tuple[str | None, bool]:
+        """Gera TOTP HMAC-SHA1 e tenta o endpoint anônimo assinado.
+
+        Retorna (token, blocked_by_upstream). `blocked_by_upstream=True`
+        sinaliza pro chamador ativar backoff (não adianta tentar outros).
+        """
+        try:
+            totp_code = pyotp.TOTP(secret).now()
+            ts = int(time.time() * 1000)
+            url = CANVAS_TOKEN_URL_TOTP_TEMPLATE.format(
+                totp=totp_code, ts=ts, client_id=client_id
+            )
+            async with httpx.AsyncClient(
+                timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS, follow_redirects=True
+            ) as client:
+                response = await client.get(url, headers=TOKEN_HEADERS)
+        except Exception:
+            logger.exception("Spotify Canvas TOTP token request error")
+            return None, False
+        # 403 com "URL Blocked" = upstream IP block, não vale insistir.
+        if response.status_code == 403 and "URL Blocked" in response.text:
+            return None, True
+        token = self._extract_token(response, source=f"totp[{client_id[:6]}]")
+        return token, False
 
     async def _fetch_token_with_cookie(self) -> str | None:
         headers = dict(TOKEN_HEADERS)
