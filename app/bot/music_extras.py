@@ -12,6 +12,7 @@ from app.config.settings import OWNER_ID
 from app.db.database import SessionLocal
 from app.moderation_tigrao.storage import list_groups
 from app.services.likes import likes_service
+from app.services.music import music_service
 from app.services.spotify import spotify_service
 
 logger = logging.getLogger(__name__)
@@ -37,6 +38,46 @@ def _safe_button(text: str, callback_data: str, style: str | None = None) -> Inl
         except Exception:
             pass
     return InlineKeyboardButton(text=text, callback_data=callback_data)
+
+
+async def _list_common_groups(bot, user_id: int) -> list[dict]:
+    """Grupos conhecidos onde o user TAMBÉM é membro (bot já é, por estar registrado).
+
+    Faz uma chamada `get_chat_member` por grupo (cap em list_groups(50)). Filtra
+    status 'left'/'kicked' e 'restricted' sem is_member.
+    """
+    groups = list_groups(50)
+    result: list[dict] = []
+    for group in groups:
+        try:
+            chat_id = int(group["chat_id"])
+        except Exception:
+            continue
+        try:
+            member = await bot.get_chat_member(chat_id, user_id)
+        except Exception:
+            continue
+        status = getattr(member, "status", None)
+        if status in ("left", "kicked"):
+            continue
+        if status == "restricted" and not getattr(member, "is_member", True):
+            continue
+        result.append(group)
+    return result
+
+
+def _nowp_groups_keyboard(requester_id: int, groups: list[dict]) -> InlineKeyboardMarkup:
+    rows: list[list[InlineKeyboardButton]] = []
+    for group in groups[:10]:
+        try:
+            chat_id = int(group["chat_id"])
+        except Exception:
+            continue
+        title = str(group.get("title") or chat_id)
+        label = title if len(title) <= 40 else title[:37] + "..."
+        rows.append([_safe_button(label, f"nowp:send:{requester_id}:{chat_id}", "primary")])
+    rows.append([_safe_button("Fechar", f"nowp:close:{requester_id}", "danger")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
 def _kingplay_groups_keyboard() -> InlineKeyboardMarkup:
@@ -133,6 +174,184 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
             await message.answer_photo(photo=str(cover), caption=caption, parse_mode="HTML")
         else:
             await message.answer(caption, parse_mode="HTML")
+
+    @dp.message(Command("nowp"))
+    async def nowp(message: Message) -> None:
+        # Público: qualquer user pode rodar. Mostra picker dos grupos em comum
+        # (bot + user). Envio efetivo via callback nowp:send:<uid>:<chat_id>.
+        if not message.from_user or not message.bot:
+            return
+        from app.services.connection_check import connect_hint_for, is_user_connected
+        if not is_user_connected(message.from_user.id):
+            await message.answer(connect_hint_for(message.chat.type), parse_mode="HTML", disable_web_page_preview=True)
+            return
+        status_msg = await message.answer("Procurando grupos em comum...")
+        common = await _list_common_groups(message.bot, message.from_user.id)
+        if not common:
+            await status_msg.edit_text(
+                "Nenhum grupo em comum encontrado.\n"
+                "(O bot precisa estar nos mesmos grupos que você e ter recebido pelo menos uma mensagem lá.)"
+            )
+            return
+        await status_msg.edit_text(
+            "♫ Pra qual grupo enviar sua música atual?",
+            reply_markup=_nowp_groups_keyboard(message.from_user.id, common),
+        )
+
+    @dp.callback_query(F.data.startswith("nowp:send:"))
+    async def nowp_send_callback(query: CallbackQuery) -> None:
+        from app.bot.telegram import build_playing_payload_for_user
+        if not query.from_user or not query.data or not query.message or not query.bot:
+            await query.answer()
+            return
+        parts = query.data.split(":")
+        if len(parts) != 4:
+            await query.answer()
+            return
+        try:
+            requester_id = int(parts[2])
+            target_chat_id = int(parts[3])
+        except ValueError:
+            await query.answer()
+            return
+        if query.from_user.id != requester_id:
+            await query.answer("Esse menu não é seu.", show_alert=True)
+            return
+
+        # Invalida o teclado IMEDIATAMENTE pra evitar double-send em duplo-clique.
+        # Qualquer segundo clique cai num callback sem botões -> Telegram ignora.
+        try:
+            await query.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            pass
+
+        # Safety: confirma que user ainda é membro do grupo antes de enviar.
+        try:
+            member = await query.bot.get_chat_member(target_chat_id, requester_id)
+            status = getattr(member, "status", None)
+            if status in ("left", "kicked") or (
+                status == "restricted" and not getattr(member, "is_member", True)
+            ):
+                try:
+                    await query.message.edit_text("Você não está mais nesse grupo. Use /nowp de novo.")
+                except Exception:
+                    pass
+                await query.answer()
+                return
+        except Exception:
+            try:
+                await query.message.edit_text("Erro ao verificar membro do grupo.")
+            except Exception:
+                pass
+            await query.answer()
+            return
+
+        try:
+            chat = await query.bot.get_chat(target_chat_id)
+            group_title = _normalize_optional_text(chat.title) or str(target_chat_id)
+        except Exception:
+            group_title = str(target_chat_id)
+
+        track = await music_service.get_current_or_last_played(requester_id)
+        if not track:
+            try:
+                await query.message.edit_text(
+                    "Nada está tocando agora. Bota algo pra rolar no Spotify ou Last.fm e tenta de novo."
+                )
+            except Exception:
+                pass
+            await query.answer()
+            return
+
+        payload = await build_playing_payload_for_user(
+            requester_id, query.from_user.full_name or "Usuário", track
+        )
+        if not payload:
+            try:
+                await query.message.edit_text("Erro ao identificar a música.")
+            except Exception:
+                pass
+            await query.answer()
+            return
+        _track_id, caption, cover, keyboard = payload
+
+        await query.answer("Enviando...")
+
+        # 1) Envia pro grupo alvo (como se /playing tivesse rodado lá dentro).
+        try:
+            if cover:
+                await query.bot.send_photo(
+                    chat_id=target_chat_id, photo=str(cover),
+                    caption=caption, parse_mode="HTML", reply_markup=keyboard,
+                )
+            else:
+                await query.bot.send_message(
+                    chat_id=target_chat_id, text=caption,
+                    parse_mode="HTML", reply_markup=keyboard,
+                )
+        except Exception:
+            logger.exception("NOWP_SEND_GROUP_FAILED chat_id=%s user=%s", target_chat_id, requester_id)
+            try:
+                await query.message.edit_text(
+                    f"Erro ao enviar a mensagem no grupo <b>{html.escape(group_title)}</b>.",
+                    parse_mode="HTML",
+                )
+            except Exception:
+                pass
+            return
+
+        # 2) Substitui o picker no DM pelo próprio /playing (mesma legenda + capa).
+        try:
+            await query.message.delete()
+        except Exception:
+            pass
+        try:
+            if cover:
+                await query.bot.send_photo(
+                    chat_id=query.from_user.id, photo=str(cover),
+                    caption=caption, parse_mode="HTML", reply_markup=keyboard,
+                )
+            else:
+                await query.bot.send_message(
+                    chat_id=query.from_user.id, text=caption,
+                    parse_mode="HTML", reply_markup=keyboard,
+                )
+        except Exception:
+            logger.exception("NOWP_SEND_DM_FAILED user=%s", requester_id)
+
+        # 3) Confirmação final com nome do grupo.
+        try:
+            await query.bot.send_message(
+                chat_id=query.from_user.id,
+                text=f"✓ Enviado para <b>{html.escape(group_title)}</b>.",
+                parse_mode="HTML",
+            )
+        except Exception:
+            logger.exception("NOWP_CONFIRM_FAILED user=%s", requester_id)
+
+    @dp.callback_query(F.data.startswith("nowp:close:"))
+    async def nowp_close_callback(query: CallbackQuery) -> None:
+        if not query.from_user or not query.data:
+            await query.answer()
+            return
+        parts = query.data.split(":")
+        if len(parts) != 3:
+            await query.answer()
+            return
+        try:
+            requester_id = int(parts[2])
+        except ValueError:
+            await query.answer()
+            return
+        if query.from_user.id != requester_id:
+            await query.answer("Esse menu não é seu.", show_alert=True)
+            return
+        if query.message:
+            try:
+                await query.message.edit_text("/nowp fechado.")
+            except Exception:
+                pass
+        await query.answer()
 
     @dp.message(Command("kingplay"))
     async def kingplay(message: Message) -> None:

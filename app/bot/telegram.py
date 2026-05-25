@@ -107,18 +107,14 @@ async def _resolve_play_button_count(user_id: int, track_id: str, artist: str | 
     return await likes_service.get_track_play_count(track_id), "local"
 
 
-async def build_playing_payload(
-    message: Message, track: dict
+async def build_playing_payload_for_user(
+    user_id: int, display_name_raw: str, track: dict
 ) -> tuple[str, str, str | None, InlineKeyboardMarkup] | None:
-    """Registra o play e monta (track_id, caption HTML, cover_url, keyboard).
+    """Variante que aceita user_id/display_name explícitos.
 
-    Side effect: chama `likes_service.register_play`. Retorna `None` se faltar
-    `from_user` ou `track_id`. Reaproveitado por /playing e /tcanvas pra
-    garantir mesma legenda + mesmos botões.
+    Usada por /nowp (envio remoto via callback, onde `message.from_user` seria
+    o bot e não o user real). Mesma lógica/saída de `build_playing_payload`.
     """
-    if not message.from_user:
-        return None
-    user_id = message.from_user.id
     track_id = str(track.get("track_id") or "").strip()
     if not track_id:
         return None
@@ -132,7 +128,7 @@ async def build_playing_payload(
     user_total_likes = await likes_service.get_user_received_likes(user_id)
     liked = await likes_service.is_track_liked(user_id, track_id, owner_user_id=user_id)
 
-    display_name = html.escape(message.from_user.full_name or "Usuário")
+    display_name = html.escape(display_name_raw or "Usuário")
     user_link = f"tg://user?id={user_id}"
     track_name, artist, track_url, cover = _track_label(track)
     track_part = f'<a href="{track_url}">{track_name}</a>' if track_url else track_name
@@ -142,6 +138,24 @@ async def build_playing_payload(
     )
     keyboard = _playing_keyboard(track_id, user_id, total_plays, total_likes, liked, plays_source)
     return track_id, caption, cover, keyboard
+
+
+async def build_playing_payload(
+    message: Message, track: dict
+) -> tuple[str, str, str | None, InlineKeyboardMarkup] | None:
+    """Registra o play e monta (track_id, caption HTML, cover_url, keyboard).
+
+    Side effect: chama `likes_service.register_play`. Retorna `None` se faltar
+    `from_user` ou `track_id`. Reaproveitado por /playing e /tcanvas pra
+    garantir mesma legenda + mesmos botões.
+    """
+    if not message.from_user:
+        return None
+    return await build_playing_payload_for_user(
+        message.from_user.id,
+        message.from_user.full_name or "Usuário",
+        track,
+    )
 
 
 async def _send_playing(message: Message) -> None:
@@ -198,6 +212,11 @@ def _register_handlers(dp: Dispatcher) -> None:
             "da sua música atual e manda aqui. Se a faixa não tiver Canvas, cai automaticamente pra capa do álbum.\n\n"
             "◉ /tnow\n"
             "Mosaico ao vivo de quem está ouvindo o quê <b>neste grupo</b> agora.\n\n"
+            "✈ /nowp\n"
+            "Envia sua música atual (mesmo formato do /playing) pra um grupo onde "
+            "você e o bot estão juntos, <b>sem precisar entrar no grupo</b>. "
+            "Roda no privado, mostra a lista dos grupos em comum, você escolhe e o bot publica lá. "
+            "Confirma no privado com o nome do grupo onde foi enviado.\n\n"
             "— EXTRATOS LAST.FM —\n\n"
             "★ /myself\n"
             "Porta de entrada do seu extrato pessoal. Abre um menu com dois botões: "
