@@ -233,38 +233,35 @@ class SpotifyCanvasService:
                 # Senão, cacheia só 1h pra dar chance de tentar de novo logo.
                 negative_is_authoritative = False
 
-                # CAMADA 1: Spotify direto via TOTP (sem cookie).
-                # Em IPs que o Cloudflare libera, funciona out-of-the-box e
-                # tem ~99% de hit rate (API oficial). Em IPs bloqueados, dá
-                # 403 e entra em backoff — não tenta de novo por 10min.
-                if time.time() >= self._token_blocked_until:
+                # CAMADA 1 (PRIMÁRIA): canvasdownloader.com.
+                # Decisão do owner: priorizar o proxy terceirizado mesmo com
+                # false negatives, pois funciona sem cookie/credencial e não
+                # depende de janela do Cloudflare. Misses ficam com cache
+                # curto (1h) pras camadas seguintes tentarem de novo logo.
+                canvas_url, _proxy_definitive = await self._fetch_via_canvasdownloader(
+                    clean_track_id
+                )
+                if canvas_url:
+                    logger.info(
+                        "Spotify Canvas via PROXY: track_id=%s", clean_track_id
+                    )
+
+                # CAMADA 2: Spotify direto via cookie sp_dc OU TOTP.
+                # Só aciona quando o proxy não achou. Em IP bloqueado dá 403
+                # e entra em backoff de 10min — não tenta de novo por 10min.
+                # Com sp_dc configurado, ~99% de hit aqui.
+                if canvas_url is None and time.time() >= self._token_blocked_until:
                     token = await self._get_access_token()
                     if token:
                         canvas_url = await self._fetch_canvas_url(clean_track_id, token)
                         if canvas_url:
                             logger.info(
-                                "Spotify Canvas via TOKEN_DIRECT: track_id=%s", clean_track_id
+                                "Spotify Canvas via TOKEN_DIRECT: track_id=%s",
+                                clean_track_id,
                             )
                         else:
                             # Spotify oficial disse "sem canvas" → confiável.
                             negative_is_authoritative = True
-
-                # CAMADA 2: canvasdownloader.com (proxy terceirizado).
-                # Pega tracks que o caminho direto não conseguiu (IP bloqueado
-                # ou Spotify devolveu vazio por motivo desconhecido). Tem
-                # MUITO false negative — por isso "miss" dele não é confiável.
-                if canvas_url is None:
-                    canvas_url, proxy_definitive = await self._fetch_via_canvasdownloader(
-                        clean_track_id
-                    )
-                    if canvas_url:
-                        logger.info(
-                            "Spotify Canvas via PROXY: track_id=%s", clean_track_id
-                        )
-                    elif proxy_definitive:
-                        # Proxy confirmou "Canvas not found" — mas como ele
-                        # mente bastante, ainda não consideramos autoritativo.
-                        pass
 
                 # Decide TTL do cache:
                 # - Positivo: 24h (Canvas URLs são estáveis)
