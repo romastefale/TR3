@@ -89,6 +89,10 @@ async def _finish_monthfm(message: Message, user_id: int, display_name: str, raw
             logger.exception("monthfm failure message failed | user_id=%s", user_id)
 
 
+# I4: mantém ref forte das background tasks pra GC não coletar antes do término.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
 @router.message(Command("monthfm"))
 async def monthfm(message: Message) -> None:
     if not message.from_user:
@@ -99,8 +103,13 @@ async def monthfm(message: Message) -> None:
         return
     parts = (message.text or "").split(maxsplit=1)
     raw_month = parts[1].strip() if len(parts) > 1 else None
+    # U1: chat_action enquanto Playwright renderiza o card mensal.
+    try:
+        await message.bot.send_chat_action(message.chat.id, "upload_photo")
+    except Exception:
+        pass
     status = await message.answer("Gerando extrato mensal do Last.fm...")
-    asyncio.create_task(
+    task = asyncio.create_task(
         _finish_monthfm(
             status,
             user_id=message.from_user.id,
@@ -108,3 +117,5 @@ async def monthfm(message: Message) -> None:
             raw_month=raw_month,
         )
     )
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)

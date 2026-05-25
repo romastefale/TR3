@@ -22,6 +22,17 @@ from app.services.monthfm_card import render_monthfm_card
 logger = logging.getLogger(__name__)
 router = Router(name="songcharts")
 
+# I4: mantém ref forte das background tasks pra GC não coletar antes do término.
+# Pattern recomendado pelo Python docs (asyncio.create_task).
+_BG_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_bg(coro) -> asyncio.Task:
+    task = asyncio.create_task(coro)
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)
+    return task
+
 # Concorrência ao checar pertinência ao grupo (get_chat_member). Cada
 # checagem é uma chamada Bot API — paraleliza pra não bloquear, mas sem
 # explodir o flood limit. Em prática: 30 conectados resolve em <1s.
@@ -316,13 +327,19 @@ async def songcharts_callback(query: CallbackQuery) -> None:
     await query.answer()
     label_periodo = "semana" if period == "w" else "mês"
 
+    # U1: chat_action enquanto Playwright renderiza o card (5-15s).
+    try:
+        await query.bot.send_chat_action(query.message.chat.id, "upload_photo")
+    except Exception:
+        pass
+
     if scope == "g":
         chat_title = query.message.chat.title or "grupo"
         status = await _safe_edit(
             query.message,
             f"Gerando ranking do {label_periodo} de <b>{html.escape(chat_title)}</b>...",
         )
-        asyncio.create_task(
+        _spawn_bg(
             _run_group_flow(
                 bot=query.bot,
                 chat_id=chat_id,
@@ -336,7 +353,7 @@ async def songcharts_callback(query: CallbackQuery) -> None:
             query.message,
             f"Gerando ranking global do {label_periodo} (todos conectados)...",
         )
-        asyncio.create_task(
+        _spawn_bg(
             _run_global_flow(
                 bot=query.bot,
                 target_chat_id=query.message.chat.id,

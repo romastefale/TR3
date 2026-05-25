@@ -86,6 +86,11 @@ async def build_playing_payload_for_user(
 
     Usada por /nowp (envio remoto via callback, onde `message.from_user` seria
     o bot e não o user real). Mesma lógica/saída de `build_playing_payload`.
+
+    Registra a play ANTES de resolver counts/likes pra que o counter exibido
+    no botão reflita o estado atualizado (inclui a play recém-registrada).
+    Em caso de falha no envio posterior, ficaria um "phantom play" no DB —
+    trade-off aceito porque o oposto (counter N-1 visível) é pior pro user.
     """
     track_id = str(track.get("track_id") or "").strip()
     if not track_id:
@@ -93,7 +98,10 @@ async def build_playing_payload_for_user(
 
     track_name_raw = str(track.get("track_name") or "").strip()
     artist_raw = str(track.get("artist") or "").strip()
-    await likes_service.register_play(user_id, track_id, track_name=track_name_raw, artist_name=artist_raw)
+    try:
+        await likes_service.register_play(user_id, track_id, track_name=track_name_raw, artist_name=artist_raw)
+    except Exception:
+        logger.exception("REGISTER_PLAY_FAILED user=%s track=%s", user_id, track_id)
 
     total_plays, plays_source = await _resolve_play_button_count(user_id, track_id, artist_raw, track_name_raw)
     total_likes = await likes_service.get_total_likes(track_id, owner_user_id=user_id)
@@ -130,6 +138,15 @@ async def build_playing_payload(
     )
 
 
+async def _safe_delete(message: Message) -> None:
+    """Tenta deletar a mensagem. Falha em silêncio se bot não tem permissão
+    (Forbidden/BadRequest). Usado pra limpar comandos/gatilhos em grupos."""
+    try:
+        await message.delete()
+    except Exception:
+        logger.debug("SAFE_DELETE_FAILED chat=%s msg=%s", message.chat.id, message.message_id, exc_info=True)
+
+
 async def _send_playing(message: Message) -> None:
     if not message.from_user:
         return
@@ -137,6 +154,19 @@ async def _send_playing(message: Message) -> None:
     if not is_user_connected(user_id):
         await message.answer(connect_hint_for(message.chat.type), parse_mode="HTML", disable_web_page_preview=True)
         return
+
+    # U3: em grupo, apaga o comando/gatilho pra não poluir a conversa.
+    # O card da música vira a única mensagem visível (igual /nowp).
+    is_group = message.chat.type in ("group", "supergroup")
+    if is_group:
+        await _safe_delete(message)
+
+    # U1: feedback nativo "enviando foto..." enquanto resolve track + monta payload.
+    try:
+        await message.bot.send_chat_action(message.chat.id, "upload_photo")
+    except Exception:
+        pass
+
     track = await music_service.get_current_or_last_played(user_id)
     if not track:
         await message.answer(
@@ -513,6 +543,8 @@ def _register_handlers(dp: Dispatcher) -> None:
     async def text_aliases(message: Message) -> None:
         text = message.text or ""
         if detect_intent(text) == "play":
+            # U3: _send_playing já deleta a mensagem em grupo (gatilho some
+            # antes do card aparecer). Em DM, mantém o texto do user.
             await _send_playing(message)
 
 

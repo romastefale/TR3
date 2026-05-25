@@ -229,6 +229,10 @@ async def _finish_tnow(status: Message) -> None:
             logger.exception("TNOW_FAILURE_MESSAGE_FAILED")
 
 
+# I4: mantém ref forte das background tasks pra GC não coletar antes do término.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
 @router.message(Command("tnow"))
 async def tnow(message: Message) -> None:
     if not message.from_user:
@@ -239,5 +243,12 @@ async def tnow(message: Message) -> None:
     from app.services.connection_check import connect_hint_for, is_user_connected
     if not is_user_connected(message.from_user.id):
         await message.answer(connect_hint_for(message.chat.type), parse_mode="HTML", disable_web_page_preview=True)
+    # U1: chat_action enquanto resolve playing de todos + monta mosaico.
+    try:
+        await message.bot.send_chat_action(message.chat.id, "upload_photo")
+    except Exception:
+        pass
     status = await message.answer("Vendo quem tá ouvindo o quê agora...")
-    asyncio.create_task(_finish_tnow(status))
+    task = asyncio.create_task(_finish_tnow(status))
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)

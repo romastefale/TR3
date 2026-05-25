@@ -73,6 +73,10 @@ async def _finish_weekfm(message: Message, user_id: int, display_name: str, raw_
             logger.exception("weekfm failure message failed | user_id=%s", user_id)
 
 
+# I4: mantém ref forte das background tasks pra GC não coletar antes do término.
+_BG_TASKS: set[asyncio.Task] = set()
+
+
 @router.message(Command("weekfm"))
 async def weekfm(message: Message) -> None:
     if not message.from_user:
@@ -83,8 +87,13 @@ async def weekfm(message: Message) -> None:
         return
     parts = (message.text or "").split(maxsplit=1)
     raw_week = parts[1].strip() if len(parts) > 1 else None
+    # U1: chat_action enquanto Playwright renderiza o card semanal.
+    try:
+        await message.bot.send_chat_action(message.chat.id, "upload_photo")
+    except Exception:
+        pass
     status = await message.answer("Gerando extrato da semana do Last.fm...")
-    asyncio.create_task(
+    task = asyncio.create_task(
         _finish_weekfm(
             status,
             user_id=message.from_user.id,
@@ -92,3 +101,5 @@ async def weekfm(message: Message) -> None:
             raw_week=raw_week,
         )
     )
+    _BG_TASKS.add(task)
+    task.add_done_callback(_BG_TASKS.discard)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import html
 import logging
 
@@ -40,30 +41,38 @@ def _safe_button(text: str, callback_data: str, style: str | None = None) -> Inl
     return InlineKeyboardButton(text=text, callback_data=callback_data)
 
 
+_NOWP_MEMBER_CHECK_CONCURRENCY = 10
+
+
 async def _list_common_groups(bot, user_id: int) -> list[dict]:
     """Grupos conhecidos onde o user TAMBÉM é membro (bot já é, por estar registrado).
 
-    Faz uma chamada `get_chat_member` por grupo (cap em list_groups(50)). Filtra
-    status 'left'/'kicked' e 'restricted' sem is_member.
+    Faz `get_chat_member` por grupo em paralelo (Semaphore evita flood). Filtra
+    status 'left'/'kicked' e 'restricted' sem is_member. Antes era serial e
+    levava 5-15s pra 50 grupos; agora <1s.
     """
     groups = list_groups(50)
-    result: list[dict] = []
-    for group in groups:
+    sem = asyncio.Semaphore(_NOWP_MEMBER_CHECK_CONCURRENCY)
+
+    async def _check(group: dict) -> dict | None:
         try:
             chat_id = int(group["chat_id"])
         except Exception:
-            continue
-        try:
-            member = await bot.get_chat_member(chat_id, user_id)
-        except Exception:
-            continue
+            return None
+        async with sem:
+            try:
+                member = await bot.get_chat_member(chat_id, user_id)
+            except Exception:
+                return None
         status = getattr(member, "status", None)
         if status in ("left", "kicked"):
-            continue
+            return None
         if status == "restricted" and not getattr(member, "is_member", True):
-            continue
-        result.append(group)
-    return result
+            return None
+        return group
+
+    checked = await asyncio.gather(*(_check(g) for g in groups))
+    return [g for g in checked if g is not None]
 
 
 def _nowp_groups_keyboard(requester_id: int, groups: list[dict]) -> InlineKeyboardMarkup:
@@ -73,9 +82,21 @@ def _nowp_groups_keyboard(requester_id: int, groups: list[dict]) -> InlineKeyboa
             chat_id = int(group["chat_id"])
         except Exception:
             continue
+        # Telegram caps callback_data em 64 bytes. requester_id (Telegram ID,
+        # até 19 dígitos no futuro) + chat_id de supergrupo negativo longo
+        # (ex: -1001234567890123) podem estourar em edge cases. Se estourar,
+        # pula o botão (mensagem do picker ainda funciona, só esse grupo fica
+        # de fora). Sem fallback complexo de índice — simplicidade > 0.1% de cobertura.
+        callback_data = f"nowp:send:{requester_id}:{chat_id}"
+        if len(callback_data.encode("utf-8")) > 64:
+            logger.warning(
+                "NOWP_CALLBACK_TOO_LONG | requester=%s chat_id=%s len=%s",
+                requester_id, chat_id, len(callback_data.encode("utf-8")),
+            )
+            continue
         title = str(group.get("title") or chat_id)
         label = title if len(title) <= 40 else title[:37] + "..."
-        rows.append([_safe_button(label, f"nowp:send:{requester_id}:{chat_id}", "primary")])
+        rows.append([_safe_button(label, callback_data, "primary")])
     rows.append([_safe_button("Fechar", f"nowp:close:{requester_id}", "danger")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
@@ -275,6 +296,10 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
             return
         _track_id, caption, cover, keyboard = payload
 
+        # ACK cedo: callback queries têm janela curta (~30s) e o fluxo abaixo
+        # faz 2 envios pesados (grupo + DM). Sem ACK cedo, query.answer no
+        # fim pode falhar com "query is too old". Confirmação final vai
+        # como send_message no DM (mais confiável que toast tardio).
         await query.answer("Enviando...")
 
         # 1) Envia pro grupo alvo (como se /playing tivesse rodado lá dentro).
