@@ -1,7 +1,8 @@
 """Sprint 8: reage 👀 a mensagens em grupo contendo termos-gatilho.
 
-Termos: pierinho, pe, tigrao, tigrão, pi, pedro, p, pidro, romastefale,
-santepho, pidrao, nuapp — case-insensitive, word boundary, aceita @prefix.
+Termos: pierinho, pe, tigrao, tigrão, pi, π, pipi, pipizinho, pedro, p,
+pidro, romastefale, santepho, pidrao, nuapp — case-insensitive, word
+boundary, aceita @prefix.
 
 Chamado direto pelo webhook handler em main.py (fora do dispatcher) pra
 NUNCA consumir o update — outros handlers (tigraoresponde, commands,
@@ -19,16 +20,19 @@ logger = logging.getLogger(__name__)
 
 _TRIGGER_TERMS = (
     "pierinho",
-    "pidrao",
-    "pidro",
-    "tigrao",
-    "tigrão",
-    "pedro",
+    "pipizinho",
     "romastefale",
     "santepho",
+    "pidrao",
+    "tigrão",
+    "tigrao",
+    "pidro",
+    "pedro",
+    "pipi",
     "nuapp",
     "pe",
     "pi",
+    "π",
     "p",
 )
 # \b em ambos lados pra word boundary; @ é \W então @pedro tem boundary
