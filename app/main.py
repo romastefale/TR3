@@ -18,6 +18,7 @@ from app.bot.tcanvas import router as tcanvas_router
 from app.bot.tnow import router as tnow_router
 from app.bot.weekfm import router as weekfm_router, weekfm as weekfm_command
 from app.bot.mention_reactor import react_if_mention  # Sprint 8
+from app.bot.setup_commands import setup_bot_commands  # Sprint 9 (#4)
 from app.bot.telegram import _register_handlers, shutdown_telegram_bot, bot_dispatcher
 from app.bot.tigraoresponde import handle_tigraoresponde_update
 from app.btb import btb_router
@@ -359,6 +360,10 @@ async def on_startup() -> None:
             allowed_updates=dispatcher.resolve_used_update_types(),
             secret_token=webhook_secret,
         )
+        # Sprint 9 (#4): popula menu nativo de comandos do Telegram.
+        # Owner-only commands (hidden, manual, kingplay, etc) NÃO entram
+        # — ficam invisíveis pro público (per goal: owner-only NUNCA público).
+        await setup_bot_commands(bot)
 
 
 @app.on_event("shutdown")

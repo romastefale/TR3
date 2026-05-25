@@ -10,8 +10,12 @@ from aiogram.types import (
     CallbackQuery,
     InlineQuery,
     InlineQueryResultPhoto,
+    KeyboardButton,
+    KeyboardButtonRequestUsers,
     Message,
     MessageReactionUpdated,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
 )
 
 from app.bot.intent import detect_intent
@@ -26,6 +30,33 @@ from app.services.spotify import spotify_service
 
 logger = logging.getLogger(__name__)
 bot_dispatcher: Dispatcher = Dispatcher()
+
+
+# Sprint 9 (#8): IDs públicos de Message Effects (Premium / Bot API 7.7+).
+# Telegram só aplica em chats privados; em grupos é silenciosamente
+# ignorado. Wrap em try/except no caller pra cair pra send normal se
+# o ID for inválido pra esse user/região (ex: Premium-only effects).
+_EFFECT_FIRE = "5104841245755180586"      # 🔥
+_EFFECT_PARTY = "5046509860389126442"     # 🎉
+_EFFECT_THUMBS_UP = "5107584321108051014"  # 👍
+
+# Sprint 9 (#5): request_id estável pro botão RequestUsers do /manual.
+_MANUAL_REQUEST_USER_ID = 1001
+
+
+async def _answer_with_effect(message: Message, text: str, effect_id: str, **kwargs) -> Message:
+    """Sprint 9 (#8): tenta enviar com message_effect_id; cai pra send normal em falha.
+
+    Effects só funcionam em DM. Em grupo o Telegram costuma ignorar
+    silenciosamente, mas algumas versões rejeitam — try/except garante
+    que o user sempre recebe a mensagem.
+    """
+    if message.chat.type == "private":
+        try:
+            return await message.answer(text, message_effect_id=effect_id, **kwargs)
+        except Exception:
+            logger.debug("EFFECT_SEND_FAILED effect_id=%s", effect_id, exc_info=True)
+    return await message.answer(text, **kwargs)
 
 
 def _track_label(track: dict) -> tuple[str, str, str, str | None]:
@@ -180,12 +211,77 @@ async def _send_playing(message: Message) -> None:
 def _register_handlers(dp: Dispatcher) -> None:
     @dp.message(Command("start"))
     async def start(message: Message) -> None:
-        await message.answer(
+        # Sprint 9 (#3): deep links via /start <payload>.
+        # Payloads suportados:
+        #   - lastfm_<username> → tenta conectar Last.fm direto
+        #     (URL: t.me/<bot>?start=lastfm_romastefale)
+        #   - connect           → mostra fluxo de conexão (Last.fm + Spotify)
+        #   - help              → atalho pra /help
+        # Sem payload (ou payload desconhecido) → greeting padrão.
+        # Validação: payload é alfanumérico + underscore, max 64 chars
+        # (limite do próprio start_parameter do Telegram).
+        parts = (message.text or "").split(maxsplit=1)
+        payload = parts[1].strip() if len(parts) >= 2 else ""
+
+        if payload.startswith("lastfm_") and message.from_user:
+            raw_username = payload[len("lastfm_"):]
+            mention = _user_mention(message)
+            if not raw_username:
+                await message.answer(
+                    f"{mention}, link inválido (faltou o username).",
+                    parse_mode="HTML",
+                )
+                return
+            try:
+                username, previous = await lastfm_service.set_username(
+                    message.from_user.id, raw_username
+                )
+            except ValueError:
+                await message.answer(
+                    f"{mention}, username Last.fm inválido: "
+                    f"<code>{html.escape(raw_username)}</code>",
+                    parse_mode="HTML",
+                )
+                return
+            if previous and previous.lower() == username.lower():
+                head = f"{mention}, Last.fm reconfirmado: <b>@{html.escape(username)}</b>."
+            elif previous:
+                head = (
+                    f"{mention}, atualizei seu Last.fm de "
+                    f"<b>@{html.escape(previous)}</b> pra <b>@{html.escape(username)}</b>."
+                )
+            else:
+                head = f"{mention}, Last.fm conectado: <b>@{html.escape(username)}</b>."
+            await _answer_with_effect(message, head, _EFFECT_FIRE, parse_mode="HTML")
+            return
+
+        if payload == "connect":
+            await message.answer(
+                "🎧 <b>Conectar suas contas no tigraoRADIO</b>\n\n"
+                "<b>Last.fm</b> (obrigatório pra extratos):\n"
+                "<code>/lastfm seu_username</code> (sem @)\n\n"
+                "<b>Spotify</b> (opcional, fallback):\n"
+                "<code>/login</code>\n\n"
+                "Depois disso, <code>/playing</code> mostra o que você está ouvindo.",
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            return
+
+        if payload == "help":
+            # Redireciona pro mesmo conteúdo do /help.
+            await help_command(message)  # type: ignore[name-defined]
+            return
+
+        # Sprint 9 (#8): greeting padrão ganha efeito 🎉 (DM only, fallback OK).
+        await _answer_with_effect(
+            message,
             "♫ ♥ <b>Bem-vindo ao tigraoRADIO</b>\n\n"
             "Conecte seu Last.fm e o bot acompanha o que você está ouvindo, "
             "gera extratos visuais e monta rankings do grupo.\n\n"
             "<b>Primeiro passo:</b> <code>/lastfm seu_username</code> (sem @)\n"
             "<b>Lista completa de comandos:</b> /help",
+            _EFFECT_PARTY,
             parse_mode="HTML",
         )
 
@@ -372,7 +468,8 @@ def _register_handlers(dp: Dispatcher) -> None:
                 parse_mode="HTML",
             )
             return
-        await message.answer(head, parse_mode="HTML")
+        # Sprint 9 (#8): conexão bem-sucedida ganha efeito 🔥 (DM only, fallback OK).
+        await _answer_with_effect(message, head, _EFFECT_FIRE, parse_mode="HTML")
 
     @dp.message(Command("manual"), IsOwner())
     async def manual(message: Message) -> None:
@@ -380,6 +477,35 @@ def _register_handlers(dp: Dispatcher) -> None:
         # S3: OWNER-only via filter IsOwner (silencioso pra não-owners).
         parts = (message.text or "").split()
         if len(parts) < 3:
+            # Sprint 9 (#5): sem args → keyboard RequestUsers (DM only)
+            # captura user_id nativamente. Em grupo, mantém comportamento
+            # antigo (texto). Falha graceful pra versões aiogram antigas.
+            if message.chat.type == "private":
+                try:
+                    request_btn = KeyboardButton(
+                        text="👤 Escolher usuário",
+                        request_users=KeyboardButtonRequestUsers(
+                            request_id=_MANUAL_REQUEST_USER_ID,
+                            user_is_bot=False,
+                            max_quantity=1,
+                        ),
+                    )
+                    kb = ReplyKeyboardMarkup(
+                        keyboard=[[request_btn]],
+                        resize_keyboard=True,
+                        one_time_keyboard=True,
+                    )
+                    await message.answer(
+                        "Uso completo: <code>/manual &lt;user_id&gt; &lt;lastfm_username&gt;</code>\n"
+                        "Aceita @, URL completa do Last.fm ou só o nome.\n"
+                        "Exemplo: <code>/manual 123456789 @romastefale</code>\n\n"
+                        "Ou clica abaixo pra escolher o usuário nativamente:",
+                        parse_mode="HTML",
+                        reply_markup=kb,
+                    )
+                    return
+                except Exception:
+                    logger.debug("MANUAL_REQUEST_USERS_KB_FAILED", exc_info=True)
             await message.answer(
                 "Uso: <code>/manual &lt;user_id&gt; &lt;lastfm_username&gt;</code>\n"
                 "Aceita @, URL completa do Last.fm ou só o nome.\n"
@@ -423,6 +549,48 @@ def _register_handlers(dp: Dispatcher) -> None:
             f"• Last.fm: <b>@{html.escape(clean)}</b>\n"
             f"{cleanup_line}",
             parse_mode="HTML",
+        )
+
+    @dp.message(F.users_shared, IsOwner())
+    async def on_users_shared(message: Message) -> None:
+        """Sprint 9 (#5): captura user_id do botão RequestUsers do /manual.
+
+        Owner clica "Escolher usuário" no keyboard → Telegram envia
+        message com users_shared. Validamos request_id pra garantir
+        que veio do nosso botão (não de outro keyboard). Owner-only
+        via filter (silencioso pra não-owners). Não armazena estado:
+        owner copia o ID e roda /manual completo manualmente.
+        """
+        shared = message.users_shared
+        if not shared or shared.request_id != _MANUAL_REQUEST_USER_ID:
+            return
+        # aiogram3 expõe .users (list[SharedUser]) em versões novas e
+        # .user_ids (list[int]) em versões antigas. Tratamento defensivo.
+        target_id: int | None = None
+        users_attr = getattr(shared, "users", None)
+        if users_attr:
+            try:
+                target_id = int(users_attr[0].user_id)
+            except (AttributeError, IndexError, ValueError, TypeError):
+                target_id = None
+        if target_id is None:
+            ids_attr = getattr(shared, "user_ids", None)
+            if ids_attr:
+                try:
+                    target_id = int(ids_attr[0])
+                except (IndexError, ValueError, TypeError):
+                    target_id = None
+        if target_id is None:
+            await message.answer(
+                "Não consegui ler o usuário escolhido.",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return
+        await message.answer(
+            f"✓ User ID capturado: <code>{target_id}</code>\n\n"
+            f"Agora roda:\n<code>/manual {target_id} &lt;lastfm_username&gt;</code>",
+            parse_mode="HTML",
+            reply_markup=ReplyKeyboardRemove(),
         )
 
     @dp.message(Command("lastfmoff"))
