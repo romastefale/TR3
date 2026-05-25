@@ -2,7 +2,7 @@
 
 Bot de Telegram integrado ao Spotify e ao Last.fm para mostrar a música atual ou a última música ouvida, registrar reproduções, curtidas e rankings.
 
-A UX principal foi mantida no mesmo padrão do TR2: `/playing`, gatilhos textuais, caption, botões de plays/likes, `/mood`, `/myself` e `/songcharts`.
+A UX principal foi mantida no mesmo padrão do TR2: `/playing`, gatilhos textuais, caption, botões de plays/likes, `/myself` e `/songcharts`.
 
 ## Fontes de música
 
@@ -21,7 +21,6 @@ O bot usa uma camada unificada de música:
 /lastfm <username>
 /lastfmoff
 /playing
-/mood <0-10>
 /myself
 /songcharts
 ```
