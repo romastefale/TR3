@@ -189,9 +189,7 @@ def _register_handlers(dp: Dispatcher) -> None:
             "Interação:\n"
             "/mood <0-10> — humor da sua faixa atual\n\n"
             "Conexão:\n"
-            "/login — conectar Spotify\n"
             "/lastfm <username> — conectar Last.fm\n"
-            "/logout — desconectar Spotify\n"
             "/lastfmoff — desconectar Last.fm"
         )
 
@@ -224,12 +222,8 @@ def _register_handlers(dp: Dispatcher) -> None:
             "☻ /mood &lt;0-10&gt;\n"
             "Manda a música atual com uma nota de humor (0 = horrível, 10 = paraíso).\n\n"
             "— CONEXÃO —\n\n"
-            "↻ /login\n"
-            "Conecte sua conta do Spotify. Só funciona em DM.\n\n"
             "↻ /lastfm &lt;username&gt;\n"
-            "Conecte seu Last.fm público (sem @). Necessário pra /weekfm, /monthfm, /myself e /songcharts.\n\n"
-            "⨯ /logout\n"
-            "Desconecte sua conta Spotify.\n\n"
+            "Conecte seu Last.fm público (sem @). Necessário pra /playing, /tcanvas, /tnow, /weekfm, /monthfm, /myself e /songcharts.\n\n"
             "⨯ /lastfmoff\n"
             "Remove o Last.fm vinculado.",
             parse_mode="HTML",

@@ -27,22 +27,20 @@ def is_user_connected(user_id: int) -> bool:
         return has_lastfm
 
 
-# Mensagem curta para uso em grupo: evita poluir o chat com link de auth.
+# Mensagem curta para uso em grupo: evita poluir o chat.
 CONNECT_HINT_GROUP = (
-    "👋 Você ainda não conectou Spotify nem Last.fm — sem isso eu não consigo "
+    "👋 Você ainda não conectou o Last.fm — sem isso eu não consigo "
     "ler o que você está ouvindo.\n\n"
-    "Me chama no privado e manda <code>/login</code> que eu te guio passo-a-passo.\n"
-    "Em paralelo (aqui mesmo ou no privado) você também pode rodar "
-    "<code>/lastfm seu_username</code> (sem o @) pra conectar o Last.fm."
+    "Manda aqui mesmo (ou no meu privado): "
+    "<code>/lastfm seu_username</code> (sem o @)."
 )
 
 # Mensagem completa para uso no privado: já entrega o passo-a-passo.
 CONNECT_HINT_PRIVATE = (
-    "👋 Você ainda não conectou Spotify nem Last.fm — sem isso eu não consigo "
+    "👋 Você ainda não conectou o Last.fm — sem isso eu não consigo "
     "ler o que você está ouvindo.\n\n"
     "🎧 <b>Como conectar:</b>\n"
-    "1) <code>/login</code> — autoriza o Spotify\n"
-    "2) <code>/lastfm seu_username</code> (sem o @) — conecta o Last.fm\n\n"
+    "<code>/lastfm seu_username</code> (sem o @)\n\n"
     "Depois é só rodar o comando de novo."
 )
 
