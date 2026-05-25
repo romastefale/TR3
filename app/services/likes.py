@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.db.database import SessionLocal
 from app.models.track_like import TrackLike
 from app.models.track_play import TrackPlay
+from app.models.track_reaction import TrackReaction
 
 
 class LikesService:
@@ -94,12 +95,27 @@ class LikesService:
             return int(db.execute(stmt).scalar_one())
 
     async def get_user_received_likes(self, user_id: int) -> int:
+        """Sprint 12: fonte única = track_reactions.
+
+        Antes (Sprint 8 → 11) lia de track_likes, mas o botão ♥ foi
+        removido na Sprint 8 → tabela congelada → contador nunca
+        subia. Migração one-shot em run_migrations() copiou legado
+        pra track_reactions com emoji '♥' e chat=-1 (IDs sintéticos).
+
+        Conta (user_id, track_id) distintos pra não inflar quando o
+        mesmo user reage na mesma faixa em múltiplos cards diferentes.
+        """
         with self._new_session() as db:
-            stmt = select(func.count(TrackLike.id)).where(
-                TrackLike.owner_user_id == user_id,
-                func.coalesce(TrackLike.liked, 1) == 1,
+            subq = (
+                select(TrackReaction.user_id, TrackReaction.track_id)
+                .where(
+                    TrackReaction.owner_user_id == user_id,
+                    TrackReaction.track_id.isnot(None),
+                )
+                .distinct()
+                .subquery()
             )
-            return int(db.execute(stmt).scalar_one())
+            return int(db.execute(select(func.count()).select_from(subq)).scalar_one())
 
     async def get_user_total_likes(self, user_id: int) -> int:
         with self._new_session() as db:

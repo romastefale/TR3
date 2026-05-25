@@ -121,6 +121,73 @@ def run_migrations(engine) -> None:
             # produção (likes duplicados, etc).
             logger.warning("DB track_likes migration failed", exc_info=True)
 
+        # Sprint 12: migra track_likes legado (botão ♥ removido na Sprint 8)
+        # pra track_reactions, fonte única de verdade dos likes.
+        # - chat_id = -1 + message_id = track_likes.id → IDs sintéticos
+        #   únicos por construção, sem colisão com IDs reais do Telegram.
+        # - emoji '♥' marca origem legacy (distinto de 🔥/❤/🏆 do bot).
+        # - WHERE liked=1 ignora unlikes (toggle off).
+        # - ON CONFLICT/INSERT OR IGNORE garante idempotência: rodar 2x
+        #   no boot não duplica nada (chat=-1 + msg=id + user + '♥' é UK).
+        # - track_reactions precisa existir; init_db() roda DEPOIS de
+        #   run_migrations(), então usamos CREATE TABLE IF NOT EXISTS
+        #   defensivo antes do INSERT.
+        try:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS track_reactions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        chat_id INTEGER NOT NULL,
+                        message_id INTEGER NOT NULL,
+                        user_id INTEGER NOT NULL,
+                        emoji VARCHAR NOT NULL,
+                        track_id VARCHAR,
+                        owner_user_id INTEGER,
+                        created_at DATETIME NOT NULL,
+                        CONSTRAINT uq_card_user_emoji UNIQUE (chat_id, message_id, user_id, emoji)
+                    )
+                    """
+                ) if dialect_name == "sqlite" else text(
+                    """
+                    CREATE TABLE IF NOT EXISTS track_reactions (
+                        id SERIAL PRIMARY KEY,
+                        chat_id BIGINT NOT NULL,
+                        message_id BIGINT NOT NULL,
+                        user_id BIGINT NOT NULL,
+                        emoji VARCHAR NOT NULL,
+                        track_id VARCHAR,
+                        owner_user_id BIGINT,
+                        created_at TIMESTAMP NOT NULL,
+                        CONSTRAINT uq_card_user_emoji UNIQUE (chat_id, message_id, user_id, emoji)
+                    )
+                    """
+                )
+            )
+            if dialect_name == "postgresql":
+                migrate_sql = """
+                    INSERT INTO track_reactions
+                        (chat_id, message_id, user_id, emoji, track_id, owner_user_id, created_at)
+                    SELECT -1, tl.id, tl.user_id, '♥', tl.track_id, tl.owner_user_id, tl.created_at
+                    FROM track_likes tl
+                    WHERE COALESCE(tl.liked, 1) = 1
+                    ON CONFLICT (chat_id, message_id, user_id, emoji) DO NOTHING
+                """
+            else:
+                migrate_sql = """
+                    INSERT OR IGNORE INTO track_reactions
+                        (chat_id, message_id, user_id, emoji, track_id, owner_user_id, created_at)
+                    SELECT -1, tl.id, tl.user_id, '♥', tl.track_id, tl.owner_user_id, tl.created_at
+                    FROM track_likes tl
+                    WHERE COALESCE(tl.liked, 1) = 1
+                """
+            result = conn.execute(text(migrate_sql))
+            migrated = getattr(result, "rowcount", -1)
+            if migrated > 0:
+                logger.info("Sprint 12: migrated %d track_likes → track_reactions", migrated)
+        except Exception:
+            logger.warning("Sprint 12 likes→reactions migration failed", exc_info=True)
+
 
 def init_db() -> None:
     try:
