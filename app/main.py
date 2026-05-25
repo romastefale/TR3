@@ -37,7 +37,8 @@ from app.moderation_tigrao.router import tigrao_private_text
 from app.moderation_tigrao.state import get_session
 from app.moderation_tigrao.storage import remember_group
 from app.moderation_tigrao.texts import home_text
-from app.services.music_proxy import install_music_proxy
+from app.bot.music_extras import register_music_extra_handlers
+from app.services.music import music_service
 from app.services.spotify import spotify_service
 
 app = FastAPI(title="Minimal Backend")
@@ -298,7 +299,6 @@ async def on_startup() -> None:
             "falhar silenciosamente até serem configuradas",
             ",".join(missing_env),
         )
-    install_music_proxy()
     init_db()
     run_migrations(engine)
     with engine.begin() as conn:
@@ -335,6 +335,11 @@ async def on_startup() -> None:
             dispatcher.include_router(myself_router)
             dispatcher.include_router(songcharts_router)
             dispatcher.include_router(btb_router)
+            # Sprint 3.5: register_music_extra_handlers usa decorators
+            # dinâmicos (@dp.message) em vez de Router, por isso é chamada
+            # explícita aqui em vez de include_router. Antes vinha via
+            # music_proxy.install_music_proxy() — agora explícito.
+            register_music_extra_handlers(dispatcher)
             _register_handlers(dispatcher)
             _telegram_dispatcher_configured = True
         try:
@@ -391,7 +396,12 @@ async def spotify_callback(code: str, state: str) -> dict[str, str]:
 
 @app.get("/spotify/track")
 async def spotify_track(user_id: int) -> dict[str, str | None] | None:
-    return await spotify_service.get_current_or_last_played(user_id)
+    # Sprint 3.5: usa music_service (Last.fm-first) pra preservar o
+    # comportamento histórico do endpoint (com o antigo music_proxy o
+    # spotify_service já era patcheado pra Last.fm-first). Nome do
+    # endpoint segue dizendo /spotify/track por compatibilidade com
+    # consumidores externos — semântica real é "música atual do user".
+    return await music_service.get_current_or_last_played(user_id)
 
 
 @app.post("/webhook")

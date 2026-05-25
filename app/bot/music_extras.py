@@ -14,7 +14,6 @@ from app.db.database import SessionLocal
 from app.moderation_tigrao.storage import list_groups
 from app.services.likes import likes_service
 from app.services.music import music_service
-from app.services.spotify import spotify_service
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +135,9 @@ async def _send_kingplay(message: Message, target_chat_id: int, owner_user_id: i
         group_name_raw = _normalize_optional_text(str(target_chat_id))
 
     try:
-        track = await spotify_service.get_current_or_last_played(owner_user_id)
+        # Sprint 3.5: music_service (Last.fm-first) substitui o caminho
+        # via spotify_service que dependia do monkey-patch do music_proxy.
+        track = await music_service.get_current_or_last_played(owner_user_id)
     except Exception:
         logger.exception("Falha no /kingplay | owner_user_id=%s", owner_user_id)
         await message.answer("Erro ao obter música.")
@@ -185,7 +186,9 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
         if not is_user_connected(message.from_user.id):
             await message.answer(connect_hint_for(message.chat.type), parse_mode="HTML", disable_web_page_preview=True)
             return
-        data = await spotify_service.get_current_or_last_played(message.from_user.id)
+        # Sprint 3.5: usa music_service (Last.fm-first) pra manter o
+        # comportamento do antigo music_proxy.
+        data = await music_service.get_current_or_last_played(message.from_user.id)
         if not data:
             await message.answer("Nada tocando agora.")
             return
