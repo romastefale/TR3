@@ -219,9 +219,14 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
         caption = _format_albnow(message.from_user.full_name, data)
         cover = data.get("album_image_url") or data.get("cover_url")
         if cover:
-            await message.answer_photo(photo=str(cover), caption=caption, parse_mode="HTML")
+            sent = await message.answer_photo(photo=str(cover), caption=caption, parse_mode="HTML")
         else:
-            await message.answer(caption, parse_mode="HTML")
+            sent = await message.answer(caption, parse_mode="HTML")
+        # Sprint 10: bot reage 🔥 no card de álbum. /albnow não calcula
+        # playcount Last.fm (foco no álbum, não na faixa), então usa
+        # sempre o emoji default — sem threshold ❤.
+        from app.bot.telegram import _react_to_own_card, _CARD_EMOJI_DEFAULT
+        await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, _CARD_EMOJI_DEFAULT)
 
     @dp.message(Command("nowp"))
     async def nowp(message: Message) -> None:
@@ -335,7 +340,7 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
                 )
             await query.answer()
             return
-        _track_id, caption, cover, keyboard = payload
+        _track_id, caption, cover, keyboard, card_emoji = payload
 
         # ACK cedo: callback queries têm janela curta (~30s) e o fluxo abaixo
         # faz 2 envios pesados (grupo + DM). Sem ACK cedo, query.answer no
@@ -378,6 +383,9 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
             )
         except Exception:
             logger.exception("NOWP_REGISTER_CARD_FAILED chat=%s", target_chat_id)
+        # Sprint 10: bot reage 🔥/❤ no card do grupo (mesma lógica /playing).
+        from app.bot.telegram import _react_to_own_card
+        await _react_to_own_card(query.bot, sent_group.chat.id, sent_group.message_id, card_emoji)
 
         # 2) Substitui o picker no DM pelo próprio /playing (mesma legenda + capa).
         try:
@@ -407,6 +415,8 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
                 )
             except Exception:
                 logger.exception("NOWP_REGISTER_CARD_DM_FAILED user=%s", requester_id)
+            # Sprint 10: bot reage também no card do DM.
+            await _react_to_own_card(query.bot, sent_dm.chat.id, sent_dm.message_id, card_emoji)
         except Exception:
             logger.exception("NOWP_SEND_DM_FAILED user=%s", requester_id)
 

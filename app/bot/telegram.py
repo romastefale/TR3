@@ -43,6 +43,42 @@ _EFFECT_THUMBS_UP = "5107584321108051014"  # 👍
 # Sprint 9 (#5): request_id estável pro botão RequestUsers do /manual.
 _MANUAL_REQUEST_USER_ID = 1001
 
+# Sprint 10: emojis pra bot reagir nos próprios cards de música.
+# Telegram restringe reactions de bots não-Premium à lista oficial
+# (👍 👎 ❤ 🔥 🥰 👏 😁 🤔 🤯 😱 🤬 😢 🎉 🤩 🤮 💩 🙏 👌 ⚡ 💯 🏆 ❤‍🔥 etc) —
+# 🎵 e 🎶 NÃO entram. 🔥 é o melhor proxy "musical/energético"; ❤
+# marca milestone a cada 5 plays Last.fm.
+_CARD_EMOJI_DEFAULT = "🔥"
+_CARD_EMOJI_LOVED = "❤"
+_LOVED_PLAYS_THRESHOLD = 5
+
+
+def _pick_card_emoji(total_plays: int, plays_source: str) -> str:
+    """Decide emoji do bot pro card. Múltiplo de 5 plays Last.fm = ❤; resto = 🔥."""
+    if (
+        plays_source == "lastfm"
+        and total_plays > 0
+        and total_plays % _LOVED_PLAYS_THRESHOLD == 0
+    ):
+        return _CARD_EMOJI_LOVED
+    return _CARD_EMOJI_DEFAULT
+
+
+async def _react_to_own_card(bot, chat_id: int, message_id: int, emoji: str) -> None:
+    """Sprint 10: bot reage no card que ele mesmo enviou. Silencioso em falha
+    (bot pode não ter permissão de reagir, ou emoji rejeitado pela região)."""
+    try:
+        await bot.set_message_reaction(
+            chat_id=chat_id,
+            message_id=message_id,
+            reaction=[ReactionTypeEmoji(emoji=emoji)],
+        )
+    except Exception:
+        logger.debug(
+            "OWN_CARD_REACT_FAILED chat=%s msg=%s emoji=%s",
+            chat_id, message_id, emoji, exc_info=True,
+        )
+
 
 async def _answer_with_effect(message: Message, text: str, effect_id: str, **kwargs) -> Message:
     """Sprint 9 (#8): tenta enviar com message_effect_id; cai pra send normal em falha.
@@ -84,7 +120,7 @@ async def _resolve_play_button_count(user_id: int, track_id: str, artist: str | 
 
 async def build_playing_payload_for_user(
     user_id: int, display_name_raw: str, track: dict
-) -> tuple[str, str, str | None, None] | None:
+) -> tuple[str, str, str | None, None, str] | None:
     """Variante que aceita user_id/display_name explícitos.
 
     Usada por /nowp (envio remoto via callback, onde `message.from_user` seria
@@ -122,17 +158,20 @@ async def build_playing_payload_for_user(
     # NOTA: total_likes/liked/plays_source ainda calculados acima pra
     # preservar compatibilidade com `register_play` (side effect) e o
     # ♥ user_total_likes da linha 1 (legacy, dados históricos).
-    _ = (total_likes, liked, plays_source)  # mantém vars pra clareza/grep
+    _ = (total_likes, liked)  # mantém vars pra clareza/grep
     caption = (
         f"<b><a href=\"{html.escape(user_link)}\">{display_name}</a></b> · ♥ <code>{user_total_likes}</code>\n\n"
         f"♫ <code>{total_plays}</code> · <b>{track_part}</b> — <i>{artist}</i>"
     )
-    return track_id, caption, cover, None
+    # Sprint 10: emoji vai pro 5º slot do tuple — callers usam pra
+    # set_message_reaction depois de enviar o card.
+    card_emoji = _pick_card_emoji(total_plays, plays_source)
+    return track_id, caption, cover, None, card_emoji
 
 
 async def build_playing_payload(
     message: Message, track: dict
-) -> tuple[str, str, str | None, None] | None:
+) -> tuple[str, str, str | None, None, str] | None:
     """Registra o play e monta (track_id, caption HTML, cover_url, keyboard).
 
     Side effect: chama `likes_service.register_play`. Retorna `None` se faltar
@@ -188,7 +227,7 @@ async def _send_playing(message: Message) -> None:
     if not payload:
         await message.answer("Erro ao identificar a música.")
         return
-    track_id, caption, cover, keyboard = payload
+    track_id, caption, cover, keyboard, card_emoji = payload
 
     if cover:
         sent = await message.answer_photo(photo=cover, caption=caption, parse_mode="HTML", reply_markup=keyboard)
@@ -206,6 +245,8 @@ async def _send_playing(message: Message) -> None:
         track_name=str(track.get("track_name") or "").strip() or None,
         artist_name=str(track.get("artist") or "").strip() or None,
     )
+    # Sprint 10: bot reage no próprio card (🔥 padrão, ❤ a cada 5 plays Last.fm).
+    await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, card_emoji)
 
 
 def _register_handlers(dp: Dispatcher) -> None:
@@ -287,7 +328,9 @@ def _register_handlers(dp: Dispatcher) -> None:
 
     @dp.message(Command("help"))
     async def help_command(message: Message) -> None:
-        await message.answer(
+        # Sprint 10: effect FIRE em DM (toda vez), graceful fallback em grupo.
+        await _answer_with_effect(
+            message,
             "<b>COMANDOS</b>\n\n"
             "— TOCANDO AGORA —\n\n"
             "♫ /playing\n"
@@ -319,6 +362,7 @@ def _register_handlers(dp: Dispatcher) -> None:
             "Sem argumento, mostra qual username está salvo.\n\n"
             "⨯ /lastfmoff\n"
             "Remove o vínculo do seu Last.fm com o bot.",
+            _EFFECT_FIRE,
             parse_mode="HTML",
         )
 
@@ -543,11 +587,14 @@ def _register_handlers(dp: Dispatcher) -> None:
             if deleted
             else "🧹 Nenhuma sujeira antiga — slot estava limpo."
         )
-        await message.answer(
+        # Sprint 10: effect PARTY em DM (toda vez owner cadastra manual).
+        await _answer_with_effect(
+            message,
             "✓ Cadastro manual concluído.\n"
             f"• user_id: <code>{target_uid}</code>\n"
             f"• Last.fm: <b>@{html.escape(clean)}</b>\n"
             f"{cleanup_line}",
+            _EFFECT_PARTY,
             parse_mode="HTML",
         )
 
@@ -599,8 +646,11 @@ def _register_handlers(dp: Dispatcher) -> None:
             return
         mention = _user_mention(message)
         removed = await lastfm_service.clear_username(message.from_user.id)
-        await message.answer(
+        # Sprint 10: effect THUMBS_UP em DM (toda vez), graceful em grupo.
+        await _answer_with_effect(
+            message,
             f"{mention}, Last.fm removido." if removed else f"{mention}, nenhum Last.fm estava conectado.",
+            _EFFECT_THUMBS_UP,
             parse_mode="HTML",
         )
 

@@ -17,7 +17,7 @@ from aiogram import Router
 from aiogram.filters import Command
 from aiogram.types import BufferedInputFile, Message
 
-from app.bot.telegram import build_playing_payload
+from app.bot.telegram import build_playing_payload, _react_to_own_card
 from app.services.connection_check import connect_hint_for, is_user_connected
 from app.services.music import music_service
 from app.services.reactions import reactions_service
@@ -67,13 +67,15 @@ async def tcanvas(message: Message) -> None:
     if not payload:
         await message.answer("Erro ao identificar a música.")
         return
-    track_id, caption, cover, keyboard = payload
+    track_id, caption, cover, keyboard, card_emoji = payload
 
     canvas_url = await spotify_canvas_service.get_canvas_url(track_id)
     if not canvas_url:
         logger.info("TCANVAS_NO_CANVAS track_id=%s", track_id)
         sent = await _send_fallback(message, caption, cover, keyboard)
         await _register_card(sent, track, track_id, message.from_user.id)
+        # Sprint 10: bot reage no card (mesma lógica do /playing).
+        await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, card_emoji)
         return
 
     canvas_bytes = await spotify_canvas_service.download_canvas_bytes(canvas_url)
@@ -81,6 +83,7 @@ async def tcanvas(message: Message) -> None:
         logger.info("TCANVAS_DOWNLOAD_FAILED track_id=%s", track_id)
         sent = await _send_fallback(message, caption, cover, keyboard)
         await _register_card(sent, track, track_id, message.from_user.id)
+        await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, card_emoji)
         return
 
     try:
@@ -91,7 +94,9 @@ async def tcanvas(message: Message) -> None:
             reply_markup=keyboard,
         )
         await _register_card(sent, track, track_id, message.from_user.id)
+        await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, card_emoji)
     except Exception:
         logger.exception("TCANVAS_SEND_FAILED track_id=%s", track_id)
         sent = await _send_fallback(message, caption, cover, keyboard)
         await _register_card(sent, track, track_id, message.from_user.id)
+        await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, card_emoji)
