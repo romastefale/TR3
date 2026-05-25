@@ -10,7 +10,7 @@ from datetime import timedelta
 
 from aiogram import F, Router
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
-from aiogram.types import CallbackQuery
+from aiogram.types import CallbackQuery, LinkPreviewOptions
 
 from app.moderation_tigrao.actions import ban_user, delete_message, mute_user
 from app.moderation_tigrao.permissions import OWNER_ID, is_owner_callback
@@ -33,7 +33,11 @@ def _parse_two_ints(suffix: str) -> tuple[int, int] | None:
 
 async def _append_status(callback: CallbackQuery, line: str) -> None:
     """Anexa uma linha de status ao DM, mantendo o texto original. Em
-    caso de falha no edit, cai pra answer com alerta."""
+    caso de falha no edit, cai pra answer com alerta.
+
+    Sprint X5: usa LinkPreviewOptions (forma moderna, Bot API 10.0) em
+    vez de disable_web_page_preview deprecado.
+    """
     msg = callback.message
     if msg is None:
         await callback.answer(line, show_alert=True)
@@ -41,7 +45,11 @@ async def _append_status(callback: CallbackQuery, line: str) -> None:
     base = msg.html_text if msg.text else (msg.caption or "")
     new_text = f"{base}\n\n— {line}"
     try:
-        await msg.edit_text(new_text, parse_mode="HTML", disable_web_page_preview=True)
+        await msg.edit_text(
+            new_text,
+            parse_mode="HTML",
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
+        )
     except TelegramBadRequest:
         try:
             await msg.answer(line)
@@ -65,7 +73,7 @@ async def tigrao_nmw_ban(callback: CallbackQuery) -> None:
     try:
         await ban_user(callback.bot, chat_id, user_id)
         log_action(chat_id=chat_id, action="nmw_ban", target_user_id=user_id, status="success")
-        await _append_status(callback, f"🚫 Banido (user <code>{user_id}</code>).")
+        await _append_status(callback, f"Banido (user <code>{user_id}</code>).")
         await callback.answer("Banido.")
     except (TelegramBadRequest, TelegramForbiddenError) as exc:
         log_action(
@@ -98,7 +106,7 @@ async def tigrao_nmw_mute(callback: CallbackQuery) -> None:
     try:
         await mute_user(callback.bot, chat_id, user_id, timedelta(hours=1))
         log_action(chat_id=chat_id, action="nmw_mute_1h", target_user_id=user_id, status="success")
-        await _append_status(callback, f"🤐 Mutado 1h (user <code>{user_id}</code>).")
+        await _append_status(callback, f"Mutado 1h (user <code>{user_id}</code>).")
         await callback.answer("Mutado por 1h.")
     except (TelegramBadRequest, TelegramForbiddenError) as exc:
         log_action(
@@ -128,7 +136,7 @@ async def tigrao_nmw_del(callback: CallbackQuery) -> None:
     try:
         await delete_message(callback.bot, chat_id, message_id)
         log_action(chat_id=chat_id, action="nmw_delete", status="success")
-        await _append_status(callback, f"🗑 Msg <code>{message_id}</code> apagada.")
+        await _append_status(callback, f"Msg <code>{message_id}</code> apagada.")
         await callback.answer("Apagada.")
     except TelegramBadRequest as exc:
         # Caso típico: outro bot (Rose/Help/DDX) já apagou. Reporta como
@@ -137,7 +145,7 @@ async def tigrao_nmw_del(callback: CallbackQuery) -> None:
             chat_id=chat_id, action="nmw_delete",
             status="noop", error_type=type(exc).__name__, error_message=str(exc),
         )
-        await _append_status(callback, "ℹ Msg já havia sido apagada (outro bot/admin).")
+        await _append_status(callback, "Msg já havia sido apagada (outro bot/admin).")
         await callback.answer("Já estava apagada.")
     except TelegramForbiddenError as exc:
         log_action(
@@ -159,5 +167,5 @@ async def tigrao_nmw_ignore(callback: CallbackQuery) -> None:
     if not is_owner_callback(callback):
         await callback.answer("Acesso negado.", show_alert=True)
         return
-    await _append_status(callback, "✓ Ignorado.")
+    await _append_status(callback, "Ignorado.")
     await callback.answer("Ignorado.")

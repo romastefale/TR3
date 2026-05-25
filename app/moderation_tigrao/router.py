@@ -32,6 +32,7 @@ from app.moderation_tigrao.keyboards import (
     ddx_keyboard,
     groups_keyboard,
     home_keyboard,
+    link_result_keyboard,
     links_keyboard,
     logs_keyboard,
     messages_keyboard,
@@ -193,7 +194,7 @@ def _rmod_confirm_text() -> str:
     elif action == "rmod_del_all_msg":
         lines.append(f"Mensagem: {p.get('link_chat_id')} / {p.get('link_msg_id')}")
         lines.append("")
-        lines.append("Atenção: vai remover TODAS as reactions desta mensagem, inclusive as do próprio bot (🔥/❤/🏆).")
+        lines.append("Atenção: vai remover TODAS as reactions desta mensagem, inclusive as do próprio bot.")
     elif action == "rmod_mute_react":
         lines.append(f"Grupo: {session.selected_chat_id}")
         lines.append(f"Alvo: {p.get('target_label')} ({p.get('target_user_id')})")
@@ -804,9 +805,10 @@ async def tigrao_create_link(callback: CallbackQuery) -> None:
             return
         log_action(chat_id=int(session.selected_chat_id), action=action, status="success")
         if callback.message:
+            # Sprint X5: pós-criação mostra botão "Copiar link" (CopyTextButton, Bot API 10.0).
             await callback.message.edit_text(
                 success_text(title, f"Grupo: {session.selected_chat_id}\nLink: {invite_link}"),
-                reply_markup=links_keyboard(),
+                reply_markup=link_result_keyboard(invite_link),
             )
     except TelegramForbiddenError as exc:
         log_action(chat_id=int(session.selected_chat_id), action=action, status="error", error_type=type(exc).__name__, error_message=str(exc))

@@ -7,6 +7,11 @@ Roda ANTES do DDX no webhook (app/main.py) — assim:
   (DDX preprocess + dispatcher.feed_update) continue.
 - Owner pode clicar [Apagar] no DM mesmo depois do DDX apagar; tratamos
   TelegramBadRequest/MessageToDeleteNotFound silenciosamente.
+
+Sprint X5: UX nativa Bot API 10.0 — `style` nativo nos botões,
+`CopyTextButton` pros IDs e `LinkPreviewOptions` na DM. Sem emojis na
+interface (política do owner — sinalização via cor `danger`/`success`/
+`primary`).
 """
 from __future__ import annotations
 
@@ -14,7 +19,12 @@ import html
 import logging
 from typing import Any
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    CopyTextButton,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    LinkPreviewOptions,
+)
 
 from app.config.settings import OWNER_ID
 from app.services.new_member_watch import new_member_watch_service
@@ -44,28 +54,51 @@ def _shorten(value: str, limit: int = 600) -> str:
 
 
 def _build_keyboard(chat_id: int, user_id: int, message_id: int) -> InlineKeyboardMarkup:
-    """Botões inline pro DM do owner. callback_data dentro do limite de 64
-    bytes (chat_id ~14 chars + user_id/msg_id ~10 chars cada)."""
+    """Botões inline pro DM do owner.
+
+    Layout (sem emojis, sinalização por cor Bot API 10.0):
+    - Linha 1: Banir (danger) | Mutar 1h (primary)
+    - Linha 2: Apagar msg (primary) | Ignorar (success)
+    - Linha 3: Copiar ID user | Copiar ID chat (CopyTextButton, Bot API 10.0)
+
+    callback_data ≤ 64 bytes (chat_id ~14 chars + user_id/msg_id ~10 cada).
+    """
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="🚫 Banir",
+                    text="Banir",
                     callback_data=f"tigrao:nmw:ban:{chat_id}:{user_id}",
+                    style="danger",
                 ),
                 InlineKeyboardButton(
-                    text="🤐 Mutar 1h",
+                    text="Mutar 1h",
                     callback_data=f"tigrao:nmw:mute:{chat_id}:{user_id}",
+                    style="primary",
                 ),
             ],
             [
                 InlineKeyboardButton(
-                    text="🗑 Apagar msg",
+                    text="Apagar msg",
                     callback_data=f"tigrao:nmw:del:{chat_id}:{message_id}",
+                    style="primary",
                 ),
                 InlineKeyboardButton(
-                    text="✓ Ignorar",
+                    text="Ignorar",
                     callback_data="tigrao:nmw:ignore",
+                    style="success",
+                ),
+            ],
+            [
+                InlineKeyboardButton(
+                    text="Copiar ID user",
+                    copy_text=CopyTextButton(text=str(user_id)),
+                    style="primary",
+                ),
+                InlineKeyboardButton(
+                    text="Copiar ID chat",
+                    copy_text=CopyTextButton(text=str(chat_id)),
+                    style="primary",
                 ),
             ],
         ]
@@ -102,7 +135,7 @@ async def _notify_owner_new_member_link(bot, message: Any, info: dict) -> None:
         cap = info.get("alert_max", 5)
 
         notice = (
-            "🚨 <b>Tigrão — membro novo postou link</b>\n\n"
+            "<b>Tigrão — membro novo postou link</b>\n\n"
             f"Grupo: <b>{group_title}</b> (<code>{message.chat.id}</code>)\n"
             f"Membro: {author_name} — <code>{info.get('user_id')}</code>"
             f"{username_line}{joined_line}\n"
@@ -115,7 +148,7 @@ async def _notify_owner_new_member_link(bot, message: Any, info: dict) -> None:
             chat_id=OWNER_ID,
             text=notice,
             parse_mode="HTML",
-            disable_web_page_preview=True,
+            link_preview_options=LinkPreviewOptions(is_disabled=True),
             reply_markup=_build_keyboard(
                 chat_id=int(message.chat.id),
                 user_id=int(info["user_id"]),

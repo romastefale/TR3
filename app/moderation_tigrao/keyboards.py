@@ -1,19 +1,27 @@
 from __future__ import annotations
 
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import (
+    CopyTextButton,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+)
 
 
 def _button(text: str, callback_data: str, style: str | None = None) -> InlineKeyboardButton:
+    """Cria um InlineKeyboardButton.
+
+    `style` (Bot API 10.0): "danger" / "success" / "primary". Suportado
+    nativamente por aiogram 3.27 — sem necessidade de fallback.
+    """
+    kwargs: dict = {"text": text, "callback_data": callback_data}
     if style:
-        try:
-            return InlineKeyboardButton(
-                text=text,
-                callback_data=callback_data,
-                style=style,
-            )
-        except Exception:
-            pass
-    return InlineKeyboardButton(text=text, callback_data=callback_data)
+        kwargs["style"] = style
+    return InlineKeyboardButton(**kwargs)
+
+
+def _copy_button(text: str, value: str) -> InlineKeyboardButton:
+    """Botão de copiar texto pra área de transferência (Bot API 10.0)."""
+    return InlineKeyboardButton(text=text, copy_text=CopyTextButton(text=value), style="primary")
 
 
 def _back_close_rows() -> list[list[InlineKeyboardButton]]:
@@ -57,9 +65,10 @@ def rmod_reactors_picker_keyboard(reactors: list[dict], nonce: str) -> InlineKey
       picker antigo no histórico e abre outro fluxo).
     - user_id: identidade imutável (não depende de índice).
 
-    Layout: 1 user por linha (nome + emojis recentes). Linhas finais
-    com fallback "digitar manualmente" e "cancelar". O botão "Voltar"
-    leva ao menu rmod (não cancela o fluxo todo).
+    Layout: 1 user por linha (apenas nome — emojis das reactions foram
+    removidos pela política sem-emoji na interface). Linhas finais com
+    fallback "digitar manualmente" e "cancelar". O botão "Voltar" leva
+    ao menu rmod (não cancela o fluxo todo).
     """
     rows: list[list[InlineKeyboardButton]] = []
     for r in reactors:
@@ -68,8 +77,7 @@ def rmod_reactors_picker_keyboard(reactors: list[dict], nonce: str) -> InlineKey
             or (f"@{r['user_username']}" if r.get("user_username") else None)
             or str(r.get("user_id"))
         )
-        emojis = "".join(r.get("emojis", [])[:3])
-        label = f"{name} {emojis}".strip()
+        label = str(name)
         if len(label) > 60:
             label = label[:57] + "..."
         rows.append([_button(label, f"tigrao:rmod:pick:{nonce}:{r['user_id']}", "primary")])
@@ -133,6 +141,16 @@ def confirm_keyboard() -> InlineKeyboardMarkup:
 
 def links_keyboard() -> InlineKeyboardMarkup:
     rows = [[_button("Gerar link direto", "tigrao:link:direct", "primary")], [_button("Gerar link com aprovação", "tigrao:link:approval", "primary")]]
+    rows.extend(_back_close_rows())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def link_result_keyboard(invite_link: str) -> InlineKeyboardMarkup:
+    """Sprint X5: keyboard pós-criação de link com botão Copiar nativo
+    (Bot API 10.0 CopyTextButton)."""
+    rows: list[list[InlineKeyboardButton]] = [[_copy_button("Copiar link", invite_link)]]
+    rows.append([_button("Gerar outro link direto", "tigrao:link:direct", "primary")])
+    rows.append([_button("Gerar outro com aprovação", "tigrao:link:approval", "primary")])
     rows.extend(_back_close_rows())
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
