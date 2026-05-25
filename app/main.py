@@ -33,6 +33,8 @@ from app.moderation_tigrao import customize_router as tigrao_customize_router, d
 from app.moderation_tigrao.customize_router import tigrao_receive_group_photo
 from app.moderation_tigrao.ddx_router import tigrao_ddx_receive_add_words, tigrao_ddx_receive_remove_words
 from app.moderation_tigrao.ddx_runtime import tigrao_ddx_preprocess_update
+from app.moderation_tigrao.new_member_watch_router import router as tigrao_new_member_watch_router  # Sprint X4
+from app.bot.new_member_watch_runtime import tigrao_new_member_watch_preprocess_update  # Sprint X4
 from app.moderation_tigrao.keyboards import home_keyboard
 from app.moderation_tigrao.member_tag_router import tigrao_member_tag_receive_text
 from app.moderation_tigrao.permissions import is_owner_private_message
@@ -329,6 +331,7 @@ async def on_startup() -> None:
             dispatcher.include_router(tigrao_customize_router)
             dispatcher.include_router(tigrao_member_tag_router)
             dispatcher.include_router(tigrao_pinned_media_router)
+            dispatcher.include_router(tigrao_new_member_watch_router)  # Sprint X4
             dispatcher.include_router(tigrao_router)
             dispatcher.include_router(monthfm_router)
             dispatcher.include_router(weekfm_router)
@@ -515,6 +518,13 @@ async def telegram_webhook(request: Request):
             tigrao_waiting_text_handled = False
         if tigrao_waiting_text_handled:
             return {"ok": True}
+        # Sprint X4: observa membros novos + msgs com link e dispara DM ao
+        # owner ANTES do DDX. Nunca consome o update (sempre retorna False);
+        # falhas silenciosas pra não atrapalhar o pipeline normal.
+        try:
+            await tigrao_new_member_watch_preprocess_update(bot, update)
+        except Exception:
+            logger.exception("TIGRAO_NMW_PREPROCESS_FAILED | update_id=%s", update.update_id)
         try:
             ddx_handled = await tigrao_ddx_preprocess_update(bot, update)
         except Exception:

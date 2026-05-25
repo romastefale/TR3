@@ -242,6 +242,55 @@ def run_migrations(engine) -> None:
         except Exception:
             logger.warning("Sprint X3 reaction_audit table creation failed", exc_info=True)
 
+        # Sprint X4: tabela de watch de membros novos (TTL 24h). Usada pelo
+        # preprocessor `new_member_watch_runtime` pra alertar o owner via
+        # DM quando user recém-entrado posta link nas primeiras 5 msgs.
+        try:
+            if dialect_name == "postgresql":
+                conn.execute(
+                    text(
+                        """
+                        CREATE TABLE IF NOT EXISTS new_member_watch (
+                            id SERIAL PRIMARY KEY,
+                            chat_id BIGINT NOT NULL,
+                            user_id BIGINT NOT NULL,
+                            user_name VARCHAR,
+                            user_username VARCHAR,
+                            joined_at TIMESTAMP NOT NULL,
+                            alerts_sent INTEGER NOT NULL DEFAULT 0,
+                            CONSTRAINT uq_new_member_watch_chat_user
+                                UNIQUE (chat_id, user_id)
+                        )
+                        """
+                    )
+                )
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_new_member_watch_chat_id ON new_member_watch(chat_id)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_new_member_watch_user_id ON new_member_watch(user_id)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_new_member_watch_joined_at ON new_member_watch(joined_at)"))
+            else:
+                conn.execute(
+                    text(
+                        """
+                        CREATE TABLE IF NOT EXISTS new_member_watch (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            chat_id INTEGER NOT NULL,
+                            user_id INTEGER NOT NULL,
+                            user_name VARCHAR,
+                            user_username VARCHAR,
+                            joined_at DATETIME NOT NULL,
+                            alerts_sent INTEGER NOT NULL DEFAULT 0,
+                            CONSTRAINT uq_new_member_watch_chat_user
+                                UNIQUE (chat_id, user_id)
+                        )
+                        """
+                    )
+                )
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_new_member_watch_chat_id ON new_member_watch(chat_id)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_new_member_watch_user_id ON new_member_watch(user_id)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_new_member_watch_joined_at ON new_member_watch(joined_at)"))
+        except Exception:
+            logger.warning("Sprint X4 new_member_watch table creation failed", exc_info=True)
+
 
 def init_db() -> None:
     try:
@@ -252,6 +301,7 @@ def init_db() -> None:
         from app.models.track_play import TrackPlay  # noqa: F401
         from app.models.track_reaction import TrackReaction  # noqa: F401  # Sprint 8
         from app.models.reaction_audit import ReactionAudit  # noqa: F401  # Sprint X3
+        from app.models.new_member_watch import NewMemberWatch  # noqa: F401  # Sprint X4
 
         Base.metadata.create_all(bind=engine)
         logger.info("Database initialized.")
