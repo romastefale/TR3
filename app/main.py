@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import hmac
 import logging
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from sqlalchemy import text
 
 from aiogram import Bot, Dispatcher
@@ -24,7 +25,7 @@ from app.btb.relay import capture_bot_message as btb_capture_bot_message
 from app.btb.router import on_text as btb_on_text
 from app.btb.state import clear_waiting as btb_clear_waiting, get_session as btb_get_session
 from app.btb.storage import ensure_tables as btb_ensure_tables
-from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN, validate_required_env
+from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN, telegram_webhook_secret, validate_required_env
 from app.db.database import engine, init_db, run_migrations
 from app.moderation_tigrao import customize_router as tigrao_customize_router, ddx_router as tigrao_ddx_router, member_tag_router as tigrao_member_tag_router, pinned_media_router as tigrao_pinned_media_router, router as tigrao_router
 from app.moderation_tigrao.customize_router import tigrao_receive_group_photo
@@ -38,7 +39,6 @@ from app.moderation_tigrao.state import get_session
 from app.moderation_tigrao.storage import remember_group
 from app.moderation_tigrao.texts import home_text
 from app.bot.music_extras import register_music_extra_handlers
-from app.services.music import music_service
 from app.services.spotify import spotify_service
 
 app = FastAPI(title="Minimal Backend")
@@ -346,9 +346,17 @@ async def on_startup() -> None:
             btb_ensure_tables()
         except Exception:
             logger.exception("BTB_ENSURE_TABLES_FAILED")
+        # Sprint 4 (S4.4): registra secret_token derivado por HMAC do
+        # TELEGRAM_BOT_TOKEN. Telegram passa esse valor no header
+        # X-Telegram-Bot-Api-Secret-Token em cada update; o handler
+        # /webhook rejeita 403 quando ausente/diverge. Bloqueia atacante
+        # que descobre BASE_URL e tenta POSTAR update forjado (ex.: forjar
+        # from_user.id = OWNER_ID pra bypass do IsOwner filter).
+        webhook_secret = telegram_webhook_secret()
         await bot.set_webhook(
             f"{BASE_URL}/webhook",
             allowed_updates=dispatcher.resolve_used_update_types(),
+            secret_token=webhook_secret,
         )
 
 
@@ -394,18 +402,29 @@ async def spotify_callback(code: str, state: str) -> dict[str, str]:
     return {"status": "error", "message": "Falha ao conectar com Spotify. Tente /login de novo."}
 
 
-@app.get("/spotify/track")
-async def spotify_track(user_id: int) -> dict[str, str | None] | None:
-    # Sprint 3.5: usa music_service (Last.fm-first) pra preservar o
-    # comportamento histórico do endpoint (com o antigo music_proxy o
-    # spotify_service já era patcheado pra Last.fm-first). Nome do
-    # endpoint segue dizendo /spotify/track por compatibilidade com
-    # consumidores externos — semântica real é "música atual do user".
-    return await music_service.get_current_or_last_played(user_id)
+# Sprint 4 (S4.3): endpoint GET /spotify/track removido. Era código morto
+# (zero refs em todo o repo, nenhum consumidor interno ou externo). Pior:
+# aceitava qualquer user_id como query string e devolvia o que essa pessoa
+# estava ouvindo, sem auth — vazamento contínuo de listening habits pra
+# quem descobrisse a URL pública do Railway.
 
 
 @app.post("/webhook")
 async def telegram_webhook(request: Request):
+    # Sprint 4 (S4.4): valida secret_token do Telegram. Sem header válido,
+    # rejeita 403 (Telegram não tenta de novo em 4xx, evita loop). Se a
+    # função telegram_webhook_secret() devolve None (TELEGRAM_BOT_TOKEN
+    # vazio em dev), pula a verificação — mesmo cenário em que o
+    # set_webhook não registrou secret nenhum.
+    expected_secret = telegram_webhook_secret()
+    if expected_secret is not None:
+        provided = request.headers.get("X-Telegram-Bot-Api-Secret-Token") or ""
+        if not hmac.compare_digest(provided, expected_secret):
+            logger.warning(
+                "WEBHOOK_INVALID_SECRET | client=%s",
+                request.client.host if request.client else "?",
+            )
+            return Response(status_code=403)
     try:
         data = await request.json()
         update = Update.model_validate(data, context={"bot": bot})

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import hmac
 import os
 from pathlib import Path
 
@@ -74,3 +76,23 @@ REQUIRED_ENV_VARS: tuple[tuple[str, str], ...] = (
 def validate_required_env() -> list[str]:
     """Retorna lista de env vars críticas faltantes. Vazia = tudo ok."""
     return [name for name, value in REQUIRED_ENV_VARS if not value]
+
+
+# Sprint 4 (S4.4): secret_token do webhook Telegram derivado por HMAC do
+# TELEGRAM_BOT_TOKEN. Mesma estratégia da Sprint 1 OAuth state — evita
+# precisar de uma env var nova e mantém os dois lados (set_webhook +
+# validação no handler /webhook) sincronizados deterministicamente.
+# Sem TELEGRAM_BOT_TOKEN, retorna None — set_webhook sem secret e o
+# handler não exige header. Em prod com token, o secret existe sempre.
+# Telegram secret_token aceita 1-256 chars [A-Za-z0-9_-]; hex SHA256 cabe.
+_WEBHOOK_SECRET_PURPOSE = b"tr3-webhook-v1"
+
+
+def telegram_webhook_secret() -> str | None:
+    if not TELEGRAM_BOT_TOKEN:
+        return None
+    return hmac.new(
+        TELEGRAM_BOT_TOKEN.encode(),
+        _WEBHOOK_SECRET_PURPOSE,
+        hashlib.sha256,
+    ).hexdigest()
