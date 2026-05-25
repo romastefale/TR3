@@ -36,7 +36,11 @@ def _safe_button(text: str, callback_data: str, style: str | None = None) -> Inl
         try:
             return InlineKeyboardButton(text=text, callback_data=callback_data, style=style)  # type: ignore[call-arg]
         except Exception:
-            pass
+            # Sprint 4 (S4.2): aiogram pode não suportar `style=` (depende
+            # da versão / API do Telegram). Detecção em runtime + fallback
+            # silencioso por design — DEBUG basta pra investigar se for
+            # preciso (em prod usa fallback toda vez sem ruído no log).
+            logger.debug("InlineKeyboardButton style fallback | text=%s", text, exc_info=True)
     return InlineKeyboardButton(text=text, callback_data=callback_data)
 
 

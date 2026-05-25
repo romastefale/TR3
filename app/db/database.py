@@ -47,7 +47,11 @@ def run_migrations(engine) -> None:
             try:
                 conn.execute(text(stmt))
             except Exception:
-                pass
+                # Sprint 4 (S4.2): falhas esperadas em SQLite (ALTER COLUMN
+                # não suportado) ou quando a coluna/constraint já está no
+                # estado desejado. DEBUG basta pra investigar quando algo
+                # novo aparecer.
+                logger.debug("DB migration stmt skipped | stmt=%s", stmt, exc_info=True)
 
         try:
             conn.execute(
@@ -63,7 +67,11 @@ def run_migrations(engine) -> None:
                 )
             )
         except Exception:
-            pass
+            # Sprint 4 (S4.2): CREATE TABLE IF NOT EXISTS deveria ser
+            # idempotente — falha aqui sinaliza problema sério (conexão
+            # morta, schema corrompido). WARNING com traceback pra Railway
+            # logs mostrarem rápido sem mascarar.
+            logger.warning("DB lastfm_profiles ensure failed", exc_info=True)
 
         try:
             index_rows = conn.execute(text("PRAGMA index_list(track_likes)")).all()
@@ -106,7 +114,12 @@ def run_migrations(engine) -> None:
                     text("CREATE UNIQUE INDEX uq_user_owner_track_like ON track_likes(user_id, owner_user_id, track_id)")
                 )
         except Exception:
-            pass
+            # Sprint 4 (S4.2): migração de track_likes pra UNIQUE composto.
+            # Falha aqui PODE deixar schema inconsistente (tabela temp
+            # `track_likes_migrated` pendurada). WARNING + traceback no
+            # log do Railway pra investigar antes que vire bug em
+            # produção (likes duplicados, etc).
+            logger.warning("DB track_likes migration failed", exc_info=True)
 
 
 def init_db() -> None:

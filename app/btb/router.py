@@ -96,7 +96,11 @@ async def cb_close(cb: CallbackQuery) -> None:
         try:
             await cb.message.delete()
         except Exception:
-            pass
+            # Sprint 4 (S4.2): falha esperada quando a mensagem já foi
+            # apagada (user clicou close 2x ou >48h de idade — Telegram
+            # bloqueia delete). Mantemos no DEBUG só pra rastrear caso
+            # comece a falhar por outro motivo (rate limit, permissão).
+            logger.debug("btb close: cb.message.delete failed", exc_info=True)
     await cb.answer("Fechado.")
 
 
@@ -317,7 +321,10 @@ async def cb_allowlist_rm(cb: CallbackQuery) -> None:
                 text_value, reply_markup=allowlist_keyboard(new_targets), parse_mode="HTML"
             )
         except Exception:
-            pass
+            # Sprint 4 (S4.2): falha comum é "message is not modified"
+            # quando o conteúdo bate exatamente. DEBUG evita ruído no log
+            # mas mantém visibilidade pra erros reais (rate limit etc).
+            logger.debug("btb allowlist: edit_text failed", exc_info=True)
 
 
 # ---------- LOGS ----------

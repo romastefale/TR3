@@ -109,7 +109,10 @@ def build_tnow_card_html(entries: list[TnowEntry], *, now: datetime | None = Non
         from datetime import timezone, timedelta
         local = now.replace(tzinfo=timezone.utc).astimezone(timezone(timedelta(hours=-3)))
     except Exception:
-        pass
+        # Sprint 4 (S4.2): fallback usa `now` cru (UTC) — só perde o ajuste
+        # de fuso. Antes era silencioso; agora deixa rastro pra entender se
+        # algum input estranho de `datetime` está chegando aqui.
+        logger.debug("tnow_card timezone conversion failed", exc_info=True)
     stamp_value = local.strftime("%d/%m • %H:%M")
     stamp_iso = local.strftime("%Y-%m-%d %H:%M BRT")
     values = {
