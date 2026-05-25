@@ -174,8 +174,12 @@ async def _send_kingplay(message: Message, target_chat_id: int, owner_user_id: i
         logger.exception("Falha ao fixar /kingplay")
 
     safe_owner = html.escape(owner_display_name or str(owner_user_id))
+    # Sprint 5 (S5.01): removido `target_chat_id` e `sent.message_id` da
+    # resposta — antes vazava topologia de grupos pra quem visse o print
+    # ou log. Confirmação fica enxuta; quem precisa do ID consulta logs
+    # do bot (que mantêm contexto completo via logger.exception em falha).
     await message.answer(
-        f"Kingplay enviado.\nDono: {safe_owner}\nGrupo: {target_chat_id}\nMensagem: {sent.message_id}",
+        f"Kingplay enviado.\nDono: {safe_owner}",
         parse_mode="HTML",
     )
     return True
@@ -263,14 +267,22 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
                 try:
                     await query.message.edit_text("Você não está mais nesse grupo. Use /nowp de novo.")
                 except Exception:
-                    pass
+                    # Sprint 5 (D5.02): se feedback ao user falhar, ele
+                    # fica sem saber por quê — logamos pra investigar.
+                    logger.warning(
+                        "NOWP_EDIT_FAILED | branch=not_member | requester=%s | target=%s",
+                        requester_id, target_chat_id, exc_info=True,
+                    )
                 await query.answer()
                 return
         except Exception:
             try:
                 await query.message.edit_text("Erro ao verificar membro do grupo.")
             except Exception:
-                pass
+                logger.warning(
+                    "NOWP_EDIT_FAILED | branch=member_check_error | requester=%s | target=%s",
+                    requester_id, target_chat_id, exc_info=True,
+                )
             await query.answer()
             return
 
@@ -287,7 +299,10 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
                     "Nada está tocando agora. Bota algo pra rolar no Spotify ou Last.fm e tenta de novo."
                 )
             except Exception:
-                pass
+                logger.warning(
+                    "NOWP_EDIT_FAILED | branch=no_track | requester=%s | target=%s",
+                    requester_id, target_chat_id, exc_info=True,
+                )
             await query.answer()
             return
 
@@ -298,7 +313,10 @@ def register_music_extra_handlers(dp: Dispatcher) -> None:
             try:
                 await query.message.edit_text("Erro ao identificar a música.")
             except Exception:
-                pass
+                logger.warning(
+                    "NOWP_EDIT_FAILED | branch=no_payload | requester=%s | target=%s",
+                    requester_id, target_chat_id, exc_info=True,
+                )
             await query.answer()
             return
         _track_id, caption, cover, keyboard = payload

@@ -240,6 +240,28 @@ def _fit_cover(image: Image.Image, size: int) -> Image.Image:
 
 
 class LastfmCapsuleService:
+    def __init__(self) -> None:
+        # Sprint 5 (R5.01): pool httpx compartilhado. Antes cada chamada
+        # (_recent_tracks, _estimate_minutes, _build_collage, hero upgrade
+        # em build_capsule) abria AsyncClient próprio — somando 3-4 TLS
+        # handshakes por execução de /monthfm. Lazy init, fechado em
+        # shutdown() pelo on_shutdown do FastAPI.
+        self._http: httpx.AsyncClient | None = None
+
+    def _client(self) -> httpx.AsyncClient:
+        if self._http is None:
+            self._http = httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS)
+        return self._http
+
+    async def shutdown(self) -> None:
+        if self._http is not None:
+            try:
+                await self._http.aclose()
+            except Exception:
+                logger.exception("Last.fm capsule httpx pool close failed")
+            self._http = None
+        logger.info("Last.fm capsule service stopped.")
+
     async def _api_get(self, client: httpx.AsyncClient, params: dict[str, Any]) -> dict[str, Any] | None:
         if not LASTFM_API_KEY:
             return None
@@ -266,35 +288,39 @@ class LastfmCapsuleService:
         tracks: list[dict[str, Any]] = []
         total_reported = 0
         capped = False
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-            for page in range(1, MAX_RECENT_PAGES + 1):
-                data = await self._api_get(
-                    client,
-                    {
-                        "method": "user.getrecenttracks",
-                        "user": username,
-                        "from": str(spec.start_ts),
-                        "to": str(spec.end_ts - 1),
-                        "limit": str(RECENT_LIMIT),
-                        "page": str(page),
-                        "extended": "1",
-                    },
-                )
-                if not data:
-                    break
-                recent = data.get("recenttracks") or {}
-                attr = recent.get("@attr") or {}
-                total_reported = _safe_int(attr.get("total")) or total_reported
-                total_pages = _safe_int(attr.get("totalPages")) or 1
-                page_items = recent.get("track") or []
-                if isinstance(page_items, dict):
-                    page_items = [page_items]
-                if isinstance(page_items, list):
-                    tracks.extend(item for item in page_items if isinstance(item, dict))
-                if page >= total_pages:
-                    break
-                if page == MAX_RECENT_PAGES and total_pages > MAX_RECENT_PAGES:
-                    capped = True
+        # Sprint 5 (R5.01): usa pool compartilhado em vez de AsyncClient
+        # próprio. Páginas continuam seriais (paginação Last.fm depende
+        # do total reportado na primeira página + early break por
+        # total_pages, então paralelizar daria 0 ganho na maioria).
+        client = self._client()
+        for page in range(1, MAX_RECENT_PAGES + 1):
+            data = await self._api_get(
+                client,
+                {
+                    "method": "user.getrecenttracks",
+                    "user": username,
+                    "from": str(spec.start_ts),
+                    "to": str(spec.end_ts - 1),
+                    "limit": str(RECENT_LIMIT),
+                    "page": str(page),
+                    "extended": "1",
+                },
+            )
+            if not data:
+                break
+            recent = data.get("recenttracks") or {}
+            attr = recent.get("@attr") or {}
+            total_reported = _safe_int(attr.get("total")) or total_reported
+            total_pages = _safe_int(attr.get("totalPages")) or 1
+            page_items = recent.get("track") or []
+            if isinstance(page_items, dict):
+                page_items = [page_items]
+            if isinstance(page_items, list):
+                tracks.extend(item for item in page_items if isinstance(item, dict))
+            if page >= total_pages:
+                break
+            if page == MAX_RECENT_PAGES and total_pages > MAX_RECENT_PAGES:
+                capped = True
         return tracks, total_reported or len(tracks), capped
 
     async def _track_duration_seconds(self, client: httpx.AsyncClient, artist: str, track: str) -> int | None:
@@ -340,16 +366,26 @@ class LastfmCapsuleService:
     async def _estimate_minutes(self, track_counts: Counter[tuple[str, str]]) -> tuple[int | None, int, int]:
         if not track_counts:
             return None, 0, 0
-        looked_up = 0
+        # Sprint 5 (P5.01 + R5.01): paraleliza até MAX_DURATION_LOOKUPS
+        # buscas de duração via asyncio.gather com semáforo (cap=8 pra
+        # não estourar rate limit da Last.fm). Antes era serial — uma
+        # geração de /monthfm acumulava 10-30s só nesse loop.
+        items = list(track_counts.most_common(MAX_DURATION_LOOKUPS))
+        client = self._client()
+        sem = asyncio.Semaphore(8)
+
+        async def fetch(artist: str, track: str) -> int | None:
+            async with sem:
+                return await self._track_duration_seconds(client, artist, track)
+
+        durations = await asyncio.gather(*(fetch(a, t) for (a, t), _ in items))
         covered_plays = 0
         total_seconds = 0
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-            for (artist, track), plays in track_counts.most_common(MAX_DURATION_LOOKUPS):
-                duration = await self._track_duration_seconds(client, artist, track)
-                looked_up += 1
-                if duration:
-                    covered_plays += int(plays)
-                    total_seconds += int(plays) * duration
+        for ((_, _), plays), duration in zip(items, durations):
+            if duration:
+                covered_plays += int(plays)
+                total_seconds += int(plays) * duration
+        looked_up = len(items)
         if total_seconds <= 0:
             return None, looked_up, covered_plays
         return round(total_seconds / 60), looked_up, covered_plays
@@ -357,23 +393,37 @@ class LastfmCapsuleService:
     async def _build_collage(self, top_tracks: list[tuple[tuple[str, str], int]], image_urls: dict[tuple[str, str], str]) -> bytes | None:
         if len(top_tracks) < MIN_COLLAGE_COVERS:
             return None
+        # Sprint 5 (P5.02 + R5.01): cada cover do collage é um pipeline
+        # independente (lookup URL + download payload). Antes serial — 4
+        # round-trips em cadeia. Agora gather paralelo. Decode PIL fica
+        # fora do gather pra não bloquear o loop com CPU em paralelo
+        # (decode em série após I/O terminar).
+        client = self._client()
+
+        async def fetch_cover(artist: str, track: str) -> bytes | None:
+            key = _track_key(artist, track)
+            url = image_urls.get(key) or await self._track_image_url(client, artist, track)
+            if not url:
+                return None
+            payload = await _fetch_image_bytes(url)
+            if not payload:
+                logger.debug("MONTHFM_COLLAGE_FETCH_FAILED | artist=%s | track=%s", artist, track)
+                return None
+            return payload
+
+        top = top_tracks[:MIN_COLLAGE_COVERS]
+        payloads = await asyncio.gather(*(fetch_cover(a, t) for (a, t), _ in top))
+        if any(p is None for p in payloads):
+            return None
+
         covers: list[Image.Image] = []
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-            for (artist, track), _ in top_tracks[:MIN_COLLAGE_COVERS]:
-                key = _track_key(artist, track)
-                url = image_urls.get(key) or await self._track_image_url(client, artist, track)
-                if not url:
-                    return None
-                payload = await _fetch_image_bytes(url)
-                if not payload:
-                    logger.debug("MONTHFM_COLLAGE_FETCH_FAILED | artist=%s | track=%s", artist, track)
-                    return None
-                try:
-                    with Image.open(io.BytesIO(payload)) as raw:
-                        covers.append(_fit_cover(raw, COVER_SIZE))
-                except Exception:
-                    logger.exception("Failed to decode monthfm cover | artist=%s | track=%s", artist, track)
-                    return None
+        for payload, ((artist, track), _) in zip(payloads, top):
+            try:
+                with Image.open(io.BytesIO(payload)) as raw:  # type: ignore[arg-type]
+                    covers.append(_fit_cover(raw, COVER_SIZE))
+            except Exception:
+                logger.exception("Failed to decode monthfm cover | artist=%s | track=%s", artist, track)
+                return None
         if len(covers) != MIN_COLLAGE_COVERS:
             return None
 
@@ -442,8 +492,10 @@ class LastfmCapsuleService:
         hero_plays_count = top_tracks[0][1] if top_tracks else 0
         hero_image_bytes: bytes | None = None
         if hero_key:
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-                upgraded_url = await self._track_image_url(client, hero_artist_name, hero_track_title)
+            # Sprint 5 (R5.01): reaproveita pool compartilhado.
+            upgraded_url = await self._track_image_url(
+                self._client(), hero_artist_name, hero_track_title
+            )
             best_url = upgraded_url or hero_image
             if best_url:
                 hero_image = best_url
