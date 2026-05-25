@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from datetime import datetime, timezone
 from typing import Any
 
@@ -96,6 +97,25 @@ def list_groups(limit: int = 20) -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
+_ERROR_MESSAGE_MAX_LEN = 200
+_LONG_DIGITS_RE = re.compile(r"\d{6,}")
+
+
+def _sanitize_error_message(message: str | None) -> str | None:
+    """Sprint 7 (T02): trunca + redige números longos (>=6 dígitos) que
+    podem vazar user_id/chat_id/phone via str(exception) do Telegram.
+
+    DB do Railway tem backups — manter PII em texto puro lá é risco
+    desnecessário. Aceitamos perder precisão de debug em troca.
+    """
+    if message is None:
+        return None
+    redacted = _LONG_DIGITS_RE.sub("***", message)
+    if len(redacted) > _ERROR_MESSAGE_MAX_LEN:
+        redacted = redacted[: _ERROR_MESSAGE_MAX_LEN - 3] + "..."
+    return redacted
+
+
 def log_action(
     *,
     chat_id: int | None,
@@ -138,7 +158,7 @@ def log_action(
                 "target_user_id": target_user_id,
                 "status": status,
                 "error_type": error_type,
-                "error_message": error_message,
+                "error_message": _sanitize_error_message(error_message),
                 "created_at": datetime.now(timezone.utc),
             },
         )

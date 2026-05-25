@@ -8,7 +8,7 @@ from aiogram.types import CallbackQuery, Message
 
 from app.moderation_tigrao.keyboards import ddx_keyboard, home_keyboard
 from app.moderation_tigrao.permissions import is_owner_callback, is_owner_private_message
-from app.moderation_tigrao.state import clear_action, get_session, set_action
+from app.moderation_tigrao.state import clear_action, consume_if_expired, get_session, set_action
 from app.moderation_tigrao.storage import get_ddx_filters, load_ddx_words, log_action, set_ddx_filters
 from app.moderation_tigrao.texts import error_text, success_text
 
@@ -96,6 +96,17 @@ async def tigrao_ddx_receive_add_words(message: Message) -> None:
     if not is_owner_private_message(message):
         return
 
+    # Sprint 7 (T01): guard de expiração.
+    if consume_if_expired():
+        await message.answer(
+            error_text(
+                "Sessão expirada",
+                "O fluxo de adicionar filtro DDX expirou (15 min).",
+                "Use /tigrao para recomeçar.",
+            )
+        )
+        return
+
     session = get_session()
     if not session.selected_chat_id:
         await message.answer(_need_group_text(), reply_markup=home_keyboard())
@@ -152,6 +163,17 @@ async def tigrao_ddx_remove(callback: CallbackQuery) -> None:
 @router.message(F.text, lambda message: get_session().waiting_for == "ddx_remove_words")
 async def tigrao_ddx_receive_remove_words(message: Message) -> None:
     if not is_owner_private_message(message):
+        return
+
+    # Sprint 7 (T01): guard de expiração.
+    if consume_if_expired():
+        await message.answer(
+            error_text(
+                "Sessão expirada",
+                "O fluxo de remover filtro DDX expirou (15 min).",
+                "Use /tigrao para recomeçar.",
+            )
+        )
         return
 
     session = get_session()

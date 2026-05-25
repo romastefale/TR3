@@ -10,7 +10,7 @@ from aiogram.types import CallbackQuery, Message
 from app.moderation_tigrao.actions import set_group_photo
 from app.moderation_tigrao.keyboards import customize_keyboard, home_keyboard
 from app.moderation_tigrao.permissions import is_owner_callback, is_owner_private_message
-from app.moderation_tigrao.state import clear_action, get_session, set_action
+from app.moderation_tigrao.state import clear_action, consume_if_expired, get_session, set_action
 from app.moderation_tigrao.storage import log_action
 from app.moderation_tigrao.texts import error_text, success_text
 
@@ -78,6 +78,18 @@ async def tigrao_customize_photo(callback: CallbackQuery) -> None:
 
 @router.message(F.photo | F.document, _is_waiting_group_photo)
 async def tigrao_receive_group_photo(message: Message) -> None:
+    # Sprint 7 (T01): guard de expiração — evita aplicar foto antiga
+    # se owner abandonou o fluxo e depois mandou imagem casual em DM.
+    if consume_if_expired():
+        await message.answer(
+            error_text(
+                "Sessão expirada",
+                "O fluxo de alterar foto expirou (15 min).",
+                "Use /tigrao para recomeçar.",
+            )
+        )
+        return
+
     session = get_session()
     if not session.selected_chat_id:
         await message.answer(_need_group_text(), reply_markup=home_keyboard())

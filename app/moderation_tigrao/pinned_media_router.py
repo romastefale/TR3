@@ -7,7 +7,7 @@ from aiogram.types import CallbackQuery, Message
 from app.moderation_tigrao.actions import copy_message
 from app.moderation_tigrao.keyboards import customize_keyboard, home_keyboard
 from app.moderation_tigrao.permissions import is_owner_callback, is_owner_private_message
-from app.moderation_tigrao.state import clear_action, get_session, set_action
+from app.moderation_tigrao.state import clear_action, consume_if_expired, get_session, set_action
 from app.moderation_tigrao.storage import log_action
 from app.moderation_tigrao.texts import error_text, success_text
 
@@ -54,6 +54,18 @@ async def tigrao_send_media_pin(callback: CallbackQuery) -> None:
 
 @router.message(MEDIA_FILTER, _is_owner_waiting_pinned_media)
 async def tigrao_private_pinned_media(message: Message) -> None:
+    # Sprint 7 (T01): guard de expiração — evita encaminhar mídia
+    # casual do owner como pinned media se o fluxo ficou abandonado.
+    if consume_if_expired():
+        await message.answer(
+            error_text(
+                "Sessão expirada",
+                "O fluxo de enviar mídia e fixar expirou (15 min).",
+                "Use /tigrao para recomeçar.",
+            )
+        )
+        return
+
     session = get_session()
     if not session.selected_chat_id:
         await message.answer(_need_group_text(), reply_markup=home_keyboard())
@@ -61,16 +73,15 @@ async def tigrao_private_pinned_media(message: Message) -> None:
 
     chat_id = int(session.selected_chat_id)
     try:
+        # Sprint 7 (T04-fix, architect): usar pin=True no copy_message pra que
+        # o pin também passe pelo _with_telegram_retry. Evita partial success
+        # (mídia copiada + pin falha transitória) que antes ficava sem retry.
         copied_id = await copy_message(
             message.bot,
             target_chat_id=chat_id,
             from_chat_id=message.chat.id,
             message_id=message.message_id,
-        )
-        await message.bot.pin_chat_message(
-            chat_id=chat_id,
-            message_id=copied_id,
-            disable_notification=True,
+            pin=True,
         )
         log_action(chat_id=chat_id, action="send_media_pin", status="success")
         clear_action()

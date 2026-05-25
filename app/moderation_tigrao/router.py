@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
+
 from aiogram import F, Router
-from aiogram.exceptions import TelegramForbiddenError
+from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import Command
 from aiogram.types import CallbackQuery, Message
 
 from app.moderation_tigrao.actions import (
+    _with_telegram_retry,
     approve_join_request,
     ban_user,
     copy_message,
@@ -32,11 +35,72 @@ from app.moderation_tigrao.keyboards import (
 )
 from app.moderation_tigrao.parsers import parse_chat_id, parse_duration, parse_message_link, parse_user_id
 from app.moderation_tigrao.permissions import is_owner_callback, is_owner_private_message
-from app.moderation_tigrao.state import clear_action, get_session, set_action, set_selected_group
+from app.moderation_tigrao.state import (
+    clear_action,
+    consume_if_expired,
+    get_session,
+    set_action,
+    set_selected_group,
+    touch_session,
+)
 from app.moderation_tigrao.storage import list_groups, list_logs, log_action, remember_group
 from app.moderation_tigrao.texts import error_text, home_text, success_text
 
+logger = logging.getLogger(__name__)
+
 router = Router(name="moderation_tigrao")
+
+
+async def _validate_group_access(bot, chat_id: int) -> tuple[str | None, str | None]:
+    """Sprint 7 (T03-fix2, architect): valida proativamente se o bot tem
+    permissão no grupo. Reusado pelos 2 caminhos de seleção (botão E manual).
+
+    Returns:
+        (blocking_error_text, warning_suffix)
+        - blocking_error_text != None: caller envia erro e bloqueia seleção.
+        - warning_suffix != None: caller mostra success com aviso anexado.
+        - ambos None: tudo OK.
+    """
+    try:
+        bot_me = await bot.get_me()
+        bot_member = await bot.get_chat_member(chat_id, bot_me.id)
+        status = getattr(bot_member, "status", None)
+        if status not in {"administrator", "creator"}:
+            return (
+                error_text(
+                    "Bot sem permissão",
+                    f"O bot não é administrador no grupo {chat_id} (status: {status}).",
+                    "Escolha outro grupo ou promova o bot a admin antes de prosseguir.",
+                ),
+                None,
+            )
+    except TelegramForbiddenError:
+        return (
+            error_text(
+                "Bot removido do grupo",
+                f"O bot não está mais no grupo {chat_id}.",
+                "Escolha outro grupo ou readicione o bot antes de prosseguir.",
+            ),
+            None,
+        )
+    except TelegramBadRequest as exc:
+        # Determinístico: fail-closed em vez de deixar o owner descobrir tarde.
+        return (
+            error_text(
+                "Grupo inválido",
+                f"O Telegram recusou consultar o grupo {chat_id}: {type(exc).__name__}.",
+                "Confira o chat_id e tente outro grupo.",
+            ),
+            None,
+        )
+    except Exception as exc:
+        # Transitório (rede/5xx): fail-open com aviso pro owner.
+        logger.warning(
+            "TIGRAO_GROUP_ACCESS_CHECK_FAILED | chat_id=%s | %s: %s",
+            chat_id, type(exc).__name__, exc,
+        )
+        return (None, " (permissão não verificada — siga com cautela)")
+    return (None, None)
 
 ACTION_LABELS = {
     "ban": "Banir usuário",
@@ -161,6 +225,18 @@ async def tigrao_home(message: Message) -> None:
 
 @router.message(F.text, _is_owner_waiting_text)
 async def tigrao_private_text(message: Message) -> None:
+    # Sprint 7 (T01): se o fluxo waiting expirou (>15min sem atividade),
+    # limpa o estado e avisa em vez de processar input antigo.
+    if consume_if_expired():
+        await message.answer(
+            error_text(
+                "Sessão expirada",
+                "O fluxo anterior expirou por inatividade (15 min).",
+                "Use /tigrao para abrir o painel novamente.",
+            )
+        )
+        return
+
     session = get_session()
 
     if session.waiting_for == "chat_id":
@@ -169,9 +245,19 @@ async def tigrao_private_text(message: Message) -> None:
         except ValueError as exc:
             await message.answer(error_text("Chat ID inválido", str(exc), "Envie apenas o chat_id numérico, com ou sem hífen."))
             return
+        # Sprint 7 (T03-fix2, architect): mesmo check proativo do caminho
+        # via botão. Sem isso o caminho manual aceitava qualquer chat_id e
+        # só falhava na primeira ação.
+        blocking, warn = await _validate_group_access(message.bot, chat_id)
+        if blocking:
+            await message.answer(blocking, reply_markup=home_keyboard())
+            return
         remember_group(chat_id, str(chat_id))
         set_selected_group(chat_id, str(chat_id))
-        await message.answer(success_text("Grupo selecionado", f"Grupo: {chat_id}"), reply_markup=home_keyboard())
+        await message.answer(
+            success_text("Grupo selecionado", f"Grupo: {chat_id}{warn or ''}"),
+            reply_markup=home_keyboard(),
+        )
         return
 
     if session.waiting_for == "customize_title":
@@ -227,9 +313,22 @@ async def tigrao_private_text(message: Message) -> None:
             return
         action = "send_text_pin" if session.payload.get("pin") else "send_text"
         try:
-            sent = await message.bot.send_message(chat_id=int(session.selected_chat_id), text=text_to_send)
+            # Sprint 7 (T04-fix2, architect): send + pin via retry wrapper
+            # pra fechar coverage. Antes ambos bypassavam _with_telegram_retry.
+            target = int(session.selected_chat_id)
+            sent = await _with_telegram_retry(
+                lambda: message.bot.send_message(chat_id=target, text=text_to_send),
+                label="send_message_outbound_text",
+            )
             if session.payload.get("pin"):
-                await message.bot.pin_chat_message(chat_id=int(session.selected_chat_id), message_id=sent.message_id, disable_notification=True)
+                await _with_telegram_retry(
+                    lambda: message.bot.pin_chat_message(
+                        chat_id=target,
+                        message_id=sent.message_id,
+                        disable_notification=True,
+                    ),
+                    label="pin_chat_message_outbound_text",
+                )
             log_action(chat_id=int(session.selected_chat_id), action=action, status="success")
             clear_action()
             await message.answer(
@@ -277,8 +376,10 @@ async def tigrao_private_text(message: Message) -> None:
             await message.answer(error_text("User ID inválido", str(exc), "Envie apenas o user_id numérico, sem hífen."))
             return
         session.payload["target_user_id"] = user_id
+        # Sprint 7 (T01-fix): garante refresh quando NÃO é mute (cai no else)
         if session.selected_action == "mute":
             session.waiting_for = "duration"
+            touch_session()  # Sprint 7 (T01-fix): refresh updated_at em transition
             await message.answer(
                 "Tigrão — duração do mute\n\n"
                 f"Grupo: {session.selected_chat_id}\n"
@@ -288,6 +389,7 @@ async def tigrao_private_text(message: Message) -> None:
             )
             return
         session.waiting_for = None
+        touch_session()  # Sprint 7 (T01-fix): refresh updated_at em transition
         await message.answer(_confirm_text(), reply_markup=confirm_keyboard())
         return
 
@@ -303,12 +405,23 @@ async def tigrao_private_text(message: Message) -> None:
         session.payload["duration"] = duration
         session.payload["duration_label"] = str(message.text or "").strip()
         session.waiting_for = None
+        touch_session()  # Sprint 7 (T01-fix): refresh updated_at em transition
         await message.answer(_confirm_text(), reply_markup=confirm_keyboard())
         return
 
 
 @router.message(F.photo | F.video | F.document | F.animation | F.sticker | F.audio | F.voice | F.video_note, _is_owner_waiting_media)
 async def tigrao_private_media(message: Message) -> None:
+    # Sprint 7 (T01): mesmo guard de expiração do handler de texto.
+    if consume_if_expired():
+        await message.answer(
+            error_text(
+                "Sessão expirada",
+                "O fluxo anterior expirou por inatividade (15 min).",
+                "Use /tigrao para abrir o painel novamente.",
+            )
+        )
+        return
     session = get_session()
     if not session.selected_chat_id:
         await message.answer(_need_group_text(), reply_markup=home_keyboard())
@@ -379,10 +492,20 @@ async def tigrao_group_select(callback: CallbackQuery) -> None:
     except ValueError as exc:
         await callback.answer(str(exc), show_alert=True)
         return
+
+    # Sprint 7 (T03): check proativo de permissão antes de selecionar.
+    # Evita "selecionar → escolher ação → enviar user_id → erro permissão".
+    blocking, perm_warning = await _validate_group_access(callback.bot, chat_id)
+    if blocking:
+        if callback.message:
+            await callback.message.edit_text(blocking, reply_markup=home_keyboard())
+        await callback.answer()
+        return
+
     set_selected_group(chat_id, str(chat_id))
     if callback.message:
         await callback.message.edit_text(
-            success_text("Grupo selecionado", f"Grupo: {chat_id}"),
+            success_text("Grupo selecionado", f"Grupo: {chat_id}{perm_warning or ''}"),
             reply_markup=home_keyboard(),
         )
     await callback.answer()

@@ -7,7 +7,13 @@ from app.moderation_tigrao.actions import set_member_tag
 from app.moderation_tigrao.keyboards import customize_keyboard, home_keyboard
 from app.moderation_tigrao.parsers import parse_user_id
 from app.moderation_tigrao.permissions import is_owner_callback, is_owner_private_message
-from app.moderation_tigrao.state import clear_action, get_session, set_action
+from app.moderation_tigrao.state import (
+    clear_action,
+    consume_if_expired,
+    get_session,
+    set_action,
+    touch_session,
+)
 from app.moderation_tigrao.storage import log_action
 from app.moderation_tigrao.texts import error_text, success_text
 
@@ -76,6 +82,18 @@ async def tigrao_member_tag_start(callback: CallbackQuery) -> None:
 
 @router.message(F.text, _is_waiting_member_tag_text)
 async def tigrao_member_tag_receive_text(message: Message) -> None:
+    # Sprint 7 (T01): guard de expiração — protege ambos os passos
+    # (member_tag_user_id e member_tag_value) do fluxo de tag.
+    if consume_if_expired():
+        await message.answer(
+            error_text(
+                "Sessão expirada",
+                "O fluxo de tag de membro expirou (15 min).",
+                "Use /tigrao para recomeçar.",
+            )
+        )
+        return
+
     session = get_session()
     if not session.selected_chat_id:
         await message.answer(_need_group_text(), reply_markup=home_keyboard())
@@ -89,6 +107,7 @@ async def tigrao_member_tag_receive_text(message: Message) -> None:
             return
         session.payload["target_user_id"] = user_id
         session.waiting_for = "member_tag_value"
+        touch_session()  # Sprint 7 (T01-fix): refresh updated_at em transition
         await message.answer(
             "Tigrão — tag de membro\n\n"
             f"Grupo: {session.selected_chat_id}\n"
