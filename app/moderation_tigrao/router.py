@@ -116,15 +116,16 @@ ACTION_LABELS = {
     "unmute": "Desmutar usuário",
     "approve": "Aprovar entrada",
     "reset": "Resetar entrada",
-    "rmod_del_one": "Apagar 1 reaction",
-    "rmod_del_all": "Apagar TODAS reactions",
+    "rmod_del_user_msg": "Apagar reaction de 1 pessoa (msg)",
+    "rmod_del_user_chat": "Apagar reactions de 1 pessoa (grupo)",
+    "rmod_del_all_msg": "Apagar TODAS reactions desta msg",
     "rmod_mute_react": "Silenciar reactor",
 }
 SIMPLE_EXECUTABLE_ACTIONS = {"ban", "unban", "unmute", "approve", "reset"}
 TEXT_WAITING_STATES = {
     "chat_id", "outbound_text", "message_link", "user_id", "duration",
     "customize_title", "customize_bio",
-    "rmod_link", "rmod_emoji", "rmod_user",
+    "rmod_link", "rmod_user",
 }
 
 
@@ -171,15 +172,20 @@ def _rmod_confirm_text() -> str:
     action_label = ACTION_LABELS.get(action, action)
     p = session.payload
     lines = ["Tigrão — confirmar moderação de reactions", "", f"Ação: {action_label}"]
-    if action == "rmod_del_one":
+    if action == "rmod_del_user_msg":
         lines.append(f"Mensagem: {p.get('link_chat_id')} / {p.get('link_msg_id')}")
-        lines.append(f"Emoji: {p.get('emoji')}")
+        lines.append(f"Alvo: {p.get('target_label')} ({p.get('target_user_id')})")
         lines.append("")
-        lines.append("Atenção: a API pode permitir apagar apenas reactions setadas pelo próprio bot.")
-    elif action == "rmod_del_all":
+        lines.append("Vai apagar a reaction dessa pessoa NESSA mensagem (Telegram permite 1 reaction por user/msg).")
+    elif action == "rmod_del_user_chat":
+        lines.append(f"Grupo: {session.selected_chat_id}")
+        lines.append(f"Alvo: {p.get('target_label')} ({p.get('target_user_id')})")
+        lines.append("")
+        lines.append("Vai apagar até 10000 reactions RECENTES dessa pessoa no GRUPO INTEIRO (todas mensagens).")
+    elif action == "rmod_del_all_msg":
         lines.append(f"Mensagem: {p.get('link_chat_id')} / {p.get('link_msg_id')}")
         lines.append("")
-        lines.append("Atenção: vai remover TODAS as reactions, inclusive as do próprio bot (🔥/❤/🏆 dos cards).")
+        lines.append("Atenção: vai remover TODAS as reactions desta mensagem, inclusive as do próprio bot (🔥/❤/🏆).")
     elif action == "rmod_mute_react":
         lines.append(f"Grupo: {session.selected_chat_id}")
         lines.append(f"Alvo: {p.get('target_label')} ({p.get('target_user_id')})")
@@ -458,28 +464,16 @@ async def tigrao_private_text(message: Message) -> None:
             return
         session.payload["link_chat_id"] = link_chat_id
         session.payload["link_msg_id"] = link_msg_id
-        if session.selected_action == "rmod_del_one":
-            session.waiting_for = "rmod_emoji"
+        if session.selected_action == "rmod_del_user_msg":
+            session.waiting_for = "rmod_user"
             touch_session()
             await message.answer(
-                "Tigrão — apagar 1 reaction\n\n"
+                "Tigrão — apagar reaction de 1 pessoa\n\n"
                 f"Mensagem: {link_chat_id} / {link_msg_id}\n\n"
-                "Envie agora o emoji da reaction que deve ser apagada (ex: 💩, ❤, 🔥).\n\n"
-                "Atenção: a API pode permitir apagar apenas reactions setadas pelo próprio bot."
+                "Envie agora o user_id numérico OU @username da pessoa cuja reaction deve ser apagada nessa mensagem."
             )
             return
-        # rmod_del_all
-        session.waiting_for = None
-        touch_session()
-        await message.answer(_rmod_confirm_text(), reply_markup=rmod_confirm_keyboard())
-        return
-
-    if session.waiting_for == "rmod_emoji":
-        emoji = (message.text or "").strip()
-        if not emoji or len(emoji) > 16:
-            await message.answer(error_text("Emoji inválido", "Envie 1 emoji curto.", "Exemplo: 💩 ou ❤"))
-            return
-        session.payload["emoji"] = emoji
+        # rmod_del_all_msg → direto pra confirmação
         session.waiting_for = None
         touch_session()
         await message.answer(_rmod_confirm_text(), reply_markup=rmod_confirm_keyboard())
@@ -494,21 +488,30 @@ async def tigrao_private_text(message: Message) -> None:
         except RuntimeError as exc:
             await message.answer(error_text("Não foi possível resolver", str(exc), "Confira o @username ou use o user_id numérico."))
             return
-        # Hard-block OWNER_ID
+        # Hard-block OWNER_ID: owner não pode se auto-moderar reactions/mute.
         if target_user_id == OWNER_ID:
-            await message.answer(error_text("Operação bloqueada", "Você não pode se silenciar.", "Cancele e escolha outro alvo."))
+            await message.answer(error_text("Operação bloqueada", "Você não pode se moderar.", "Cancele e escolha outro alvo."))
             return
         session.payload["target_user_id"] = target_user_id
         session.payload["target_label"] = target_label
+        # Discrimina próximo passo por ação selecionada:
+        # - mute_react → escolher duração (teclado)
+        # - del_user_msg / del_user_chat → direto pra confirmação
+        if session.selected_action == "rmod_mute_react":
+            session.waiting_for = None
+            touch_session()
+            await message.answer(
+                "Tigrão — duração do silêncio de reactions\n\n"
+                f"Grupo: {session.selected_chat_id}\n"
+                f"Alvo: {target_label} ({target_user_id})\n\n"
+                "Escolha por quanto tempo o alvo ficará sem poder reagir.",
+                reply_markup=rmod_duration_keyboard(),
+            )
+            return
+        # del_user_msg ou del_user_chat
         session.waiting_for = None
         touch_session()
-        await message.answer(
-            "Tigrão — duração do silêncio de reactions\n\n"
-            f"Grupo: {session.selected_chat_id}\n"
-            f"Alvo: {target_label} ({target_user_id})\n\n"
-            "Escolha por quanto tempo o alvo ficará sem poder reagir.",
-            reply_markup=rmod_duration_keyboard(),
-        )
+        await message.answer(_rmod_confirm_text(), reply_markup=rmod_confirm_keyboard())
         return
 
 
@@ -950,15 +953,15 @@ async def tigrao_rmod(callback: CallbackQuery) -> None:
     )
 
 
-@router.callback_query(F.data == "tigrao:rmod:del_one")
-async def tigrao_rmod_del_one(callback: CallbackQuery) -> None:
+@router.callback_query(F.data == "tigrao:rmod:del_user_msg")
+async def tigrao_rmod_del_user_msg(callback: CallbackQuery) -> None:
     if not is_owner_callback(callback):
         await callback.answer("Acesso negado.", show_alert=True)
         return
-    set_action("rmod_del_one", waiting_for="rmod_link")
+    set_action("rmod_del_user_msg", waiting_for="rmod_link")
     if callback.message:
         await callback.message.edit_text(
-            "Tigrão — apagar 1 reaction\n\n"
+            "Tigrão — apagar reaction de 1 pessoa (msg)\n\n"
             "Cole agora o link da mensagem.\n\n"
             "Exemplos:\n"
             "https://t.me/c/1234567890/55\n"
@@ -967,17 +970,40 @@ async def tigrao_rmod_del_one(callback: CallbackQuery) -> None:
     await callback.answer()
 
 
-@router.callback_query(F.data == "tigrao:rmod:del_all")
-async def tigrao_rmod_del_all(callback: CallbackQuery) -> None:
+@router.callback_query(F.data == "tigrao:rmod:del_user_chat")
+async def tigrao_rmod_del_user_chat(callback: CallbackQuery) -> None:
     if not is_owner_callback(callback):
         await callback.answer("Acesso negado.", show_alert=True)
         return
-    set_action("rmod_del_all", waiting_for="rmod_link")
+    session = get_session()
+    if not session.selected_chat_id:
+        if callback.message:
+            await callback.message.edit_text(_need_group_text(), reply_markup=home_keyboard())
+        await callback.answer()
+        return
+    set_action("rmod_del_user_chat", waiting_for="rmod_user")
     if callback.message:
         await callback.message.edit_text(
-            "Tigrão — apagar TODAS reactions\n\n"
+            "Tigrão — apagar reactions de 1 pessoa (grupo inteiro)\n\n"
+            f"Grupo: {session.selected_chat_id}\n\n"
+            "Envie agora o user_id numérico OU @username do alvo.\n"
+            "Vai apagar até 10000 reactions RECENTES dessa pessoa em TODAS as mensagens deste grupo."
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data == "tigrao:rmod:del_all_msg")
+async def tigrao_rmod_del_all_msg(callback: CallbackQuery) -> None:
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    set_action("rmod_del_all_msg", waiting_for="rmod_link")
+    if callback.message:
+        await callback.message.edit_text(
+            "Tigrão — apagar TODAS reactions desta msg\n\n"
             "Cole agora o link da mensagem.\n\n"
-            "Atenção: vai remover todas as reactions, inclusive as do próprio bot."
+            "Atenção: vai tentar remover todas as reactions desta mensagem (incluindo as do próprio bot).\n"
+            "Observação: na Bot API atual o escopo por mensagem pode ter mudado — se a chamada falhar, use a opção 'Apagar reactions de 1 pessoa (grupo)' por usuário."
         )
     await callback.answer()
 
@@ -1051,7 +1077,7 @@ async def tigrao_rmod_confirm(callback: CallbackQuery) -> None:
     p = dict(session.payload)
     bot = callback.bot
 
-    if action not in {"rmod_del_one", "rmod_del_all", "rmod_mute_react"}:
+    if action not in {"rmod_del_user_msg", "rmod_del_user_chat", "rmod_del_all_msg", "rmod_mute_react"}:
         await callback.answer("Fluxo inválido.", show_alert=True)
         return
 
@@ -1066,24 +1092,46 @@ async def tigrao_rmod_confirm(callback: CallbackQuery) -> None:
     target_for_log: int | None = None
 
     try:
-        if action == "rmod_del_one":
+        if action == "rmod_del_user_msg":
             link_chat_id = p.get("link_chat_id")
             link_msg_id = p.get("link_msg_id")
-            emoji = p.get("emoji")
-            if link_chat_id is None or link_msg_id is None or not emoji:
+            target_user_id = p.get("target_user_id")
+            if link_chat_id is None or link_msg_id is None or target_user_id is None:
                 raise RuntimeError("dados incompletos no payload")
             chat_id_for_log = link_chat_id if isinstance(link_chat_id, int) else None
-            await delete_message_reaction(bot, link_chat_id, int(link_msg_id), str(emoji))
-            details = f"Mensagem: {link_chat_id} / {link_msg_id}\nEmoji removido: {emoji}"
+            target_for_log = int(target_user_id)
+            await delete_message_reaction(bot, link_chat_id, int(link_msg_id), int(target_user_id))
+            details = (
+                f"Mensagem: {link_chat_id} / {link_msg_id}\n"
+                f"Alvo: {p.get('target_label')} ({target_user_id})\n"
+                "Reaction da pessoa nessa mensagem removida."
+            )
             title = "Reaction removida"
 
-        elif action == "rmod_del_all":
+        elif action == "rmod_del_user_chat":
+            chat_id = session.selected_chat_id
+            target_user_id = p.get("target_user_id")
+            if not chat_id or target_user_id is None:
+                raise RuntimeError("dados incompletos no payload")
+            chat_id_for_log = int(chat_id)
+            target_for_log = int(target_user_id)
+            await delete_all_message_reactions(
+                bot, int(chat_id), user_id=int(target_user_id)
+            )
+            details = (
+                f"Grupo: {chat_id}\n"
+                f"Alvo: {p.get('target_label')} ({target_user_id})\n"
+                "Até 10000 reactions recentes desta pessoa no grupo foram removidas."
+            )
+            title = "Reactions da pessoa removidas"
+
+        elif action == "rmod_del_all_msg":
             link_chat_id = p.get("link_chat_id")
             link_msg_id = p.get("link_msg_id")
             if link_chat_id is None or link_msg_id is None:
                 raise RuntimeError("dados incompletos no payload")
             chat_id_for_log = link_chat_id if isinstance(link_chat_id, int) else None
-            await delete_all_message_reactions(bot, link_chat_id, int(link_msg_id))
+            await delete_all_message_reactions(bot, link_chat_id, message_id=int(link_msg_id))
             details = f"Mensagem: {link_chat_id} / {link_msg_id}\nTodas as reactions removidas"
             title = "Todas reactions removidas"
 

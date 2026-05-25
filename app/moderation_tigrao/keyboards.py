@@ -35,8 +35,9 @@ def home_keyboard() -> InlineKeyboardMarkup:
 
 def reactions_mod_keyboard() -> InlineKeyboardMarkup:
     rows = [
-        [_button("Apagar 1 reaction", "tigrao:rmod:del_one", "danger")],
-        [_button("Apagar TODAS reactions", "tigrao:rmod:del_all", "danger")],
+        [_button("Apagar reaction de 1 pessoa (msg)", "tigrao:rmod:del_user_msg", "danger")],
+        [_button("Apagar reactions de 1 pessoa (grupo)", "tigrao:rmod:del_user_chat", "danger")],
+        [_button("Apagar TODAS reactions desta msg", "tigrao:rmod:del_all_msg", "danger")],
         [_button("Silenciar reactor", "tigrao:rmod:mute_react", "danger")],
     ]
     rows.extend(_back_close_rows())

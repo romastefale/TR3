@@ -257,18 +257,21 @@ async def _telegram_raw(method: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 async def delete_message_reaction(
-    bot: Bot, chat_id: int | str, message_id: int, emoji: str
+    bot: Bot, chat_id: int | str, message_id: int, user_id: int
 ) -> None:
-    """Apaga uma reaction específica de uma mensagem.
+    """Apaga a reaction de UM user específico numa mensagem.
 
-    ATENÇÃO: per spec do Bot API, esse método pode estar limitado a apagar
-    apenas reactions setadas pelo próprio bot. Owner foi avisado no painel.
-    Se a API recusar, BadRequest cai no except do caller.
+    Bot API (9.6+): `deleteMessageReaction(chat_id, message_id, user_id?)`.
+    Sem parâmetro `reaction` — Telegram permite só 1 reaction por user por
+    mensagem (não-Premium), então identificar o user já basta. Requer
+    bot admin com `can_delete_messages` no chat. Se a API recusar
+    (mensagem inexistente, user fora do chat, etc.), BadRequest cai no
+    except do caller.
     """
     payload = {
         "chat_id": chat_id,
         "message_id": message_id,
-        "reaction": {"type": "emoji", "emoji": emoji},
+        "user_id": user_id,
     }
     await _with_telegram_retry(
         lambda: _telegram_raw("deleteMessageReaction", payload),
@@ -277,10 +280,27 @@ async def delete_message_reaction(
 
 
 async def delete_all_message_reactions(
-    bot: Bot, chat_id: int | str, message_id: int
+    bot: Bot,
+    chat_id: int | str,
+    message_id: int | None = None,
+    user_id: int | None = None,
 ) -> None:
-    """Apaga TODAS as reactions de uma mensagem (admin com can_delete_messages)."""
-    payload = {"chat_id": chat_id, "message_id": message_id}
+    """Apaga reactions em massa.
+
+    Bot API (9.6+): `deleteAllMessageReactions(chat_id, user_id?, actor_chat_id?)`
+    — apaga até 10000 reactions RECENTES no chat inteiro do user/actor
+    indicado. Requer bot admin com `can_delete_messages`.
+
+    Compat: `message_id` mantido na assinatura e enviado no payload por
+    retrocompat com versões antigas que suportavam escopo por mensagem;
+    a API atual ignora se não suportado. Caller deve preferir passar
+    `user_id` (escopo claro: 10000 recentes do user no chat).
+    """
+    payload: dict[str, Any] = {"chat_id": chat_id}
+    if message_id is not None:
+        payload["message_id"] = message_id
+    if user_id is not None:
+        payload["user_id"] = user_id
     await _with_telegram_retry(
         lambda: _telegram_raw("deleteAllMessageReactions", payload),
         label="delete_all_message_reactions",
