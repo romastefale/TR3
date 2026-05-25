@@ -92,6 +92,29 @@ def _safe_int(value: Any) -> int | None:
 
 
 class LastfmService:
+    def __init__(self) -> None:
+        # Sprint 4 (S4.1): pool httpx compartilhado pra Last.fm + Deezer.
+        # Antes /tnow abria 3 sockets novos por chamada (recent + deezer +
+        # track.getInfo) — agora keepalive reaproveita conexões. Como os
+        # 3 endpoints têm timeouts diferentes, o pool é criado com o
+        # timeout "padrão" (HTTP_TIMEOUT_SECONDS) e cada `.get()` que
+        # precisa de algo mais agressivo passa `timeout=` explícito.
+        self._http: httpx.AsyncClient | None = None
+
+    def _client(self) -> httpx.AsyncClient:
+        if self._http is None:
+            self._http = httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS)
+        return self._http
+
+    async def shutdown(self) -> None:
+        if self._http is not None:
+            try:
+                await self._http.aclose()
+            except Exception:
+                logger.exception("Last.fm httpx pool close failed")
+            self._http = None
+        logger.info("Last.fm service stopped.")
+
     async def set_username(self, user_id: int, username: str) -> tuple[str, str | None]:
         """Salva (ou substitui) o Last.fm do usuário.
 
@@ -187,8 +210,12 @@ class LastfmService:
             "autocorrect": "1",
         }
         try:
-            async with httpx.AsyncClient(timeout=LASTFM_TRACK_INFO_TIMEOUT_SECONDS) as client:
-                response = await client.get(LASTFM_API_BASE_URL, params=params)
+            client = self._client()
+            response = await client.get(
+                LASTFM_API_BASE_URL,
+                params=params,
+                timeout=LASTFM_TRACK_INFO_TIMEOUT_SECONDS,
+            )
         except Exception:
             logger.info("Last.fm track.getInfo failed silently | user_id=%s | artist=%s | track=%s", user_id, artist, track_name)
             return None
@@ -221,8 +248,8 @@ class LastfmService:
             "extended": "1",
         }
         try:
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-                response = await client.get(LASTFM_API_BASE_URL, params=params)
+            client = self._client()
+            response = await client.get(LASTFM_API_BASE_URL, params=params)
         except Exception:
             logger.exception("Last.fm request failed | user_id=%s | username=%s", user_id, username)
             return None
@@ -250,42 +277,46 @@ class LastfmService:
         queries = _unique_queries(artist, track_name, album)
 
         try:
-            async with httpx.AsyncClient(timeout=DEEZER_COVER_TIMEOUT_SECONDS) as client:
-                for query in queries:
-                    response = await client.get(DEEZER_SEARCH_URL, params={"q": query, "limit": "10"})
-                    if response.status_code != 200:
+            client = self._client()
+            for query in queries:
+                response = await client.get(
+                    DEEZER_SEARCH_URL,
+                    params={"q": query, "limit": "10"},
+                    timeout=DEEZER_COVER_TIMEOUT_SECONDS,
+                )
+                if response.status_code != 200:
+                    logger.info(
+                        "Deezer cover lookup returned %s | artist=%s | track=%s | query=%s",
+                        response.status_code,
+                        artist,
+                        track_name,
+                        query,
+                    )
+                    continue
+
+                data = response.json()
+                items = data.get("data") or []
+                if not isinstance(items, list):
+                    continue
+
+                for item in items:
+                    if not isinstance(item, dict):
+                        continue
+                    found_title = str(item.get("title") or "")
+                    found_artist = str((item.get("artist") or {}).get("name") or "")
+                    if not _looks_like_match(track_name, found_title) or not _looks_like_match(artist, found_artist):
+                        continue
+                    album_data = item.get("album") or {}
+                    cover = album_data.get("cover_big") or album_data.get("cover_medium")
+                    if cover:
                         logger.info(
-                            "Deezer cover lookup returned %s | artist=%s | track=%s | query=%s",
-                            response.status_code,
+                            "Deezer cover matched | artist=%s | track=%s | query=%s | cover=%s",
                             artist,
                             track_name,
                             query,
+                            cover,
                         )
-                        continue
-
-                    data = response.json()
-                    items = data.get("data") or []
-                    if not isinstance(items, list):
-                        continue
-
-                    for item in items:
-                        if not isinstance(item, dict):
-                            continue
-                        found_title = str(item.get("title") or "")
-                        found_artist = str((item.get("artist") or {}).get("name") or "")
-                        if not _looks_like_match(track_name, found_title) or not _looks_like_match(artist, found_artist):
-                            continue
-                        album_data = item.get("album") or {}
-                        cover = album_data.get("cover_big") or album_data.get("cover_medium")
-                        if cover:
-                            logger.info(
-                                "Deezer cover matched | artist=%s | track=%s | query=%s | cover=%s",
-                                artist,
-                                track_name,
-                                query,
-                                cover,
-                            )
-                            return str(cover)
+                        return str(cover)
         except Exception:
             logger.info("Deezer cover lookup failed silently | artist=%s | track=%s", artist, track_name)
             return None

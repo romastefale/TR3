@@ -70,8 +70,25 @@ class SpotifyService:
         self._track_search_cache: dict[
             tuple[str, str], tuple[dict[str, str | None] | None, datetime]
         ] = {}
+        # Sprint 4 (S4.1): pool httpx compartilhado. Antes cada chamada
+        # criava um AsyncClient novo (TCP+TLS handshake do zero ~200ms p/
+        # accounts.spotify.com e api.spotify.com). Agora keepalive global:
+        # /tnow + search_track ficam muito mais rápidos em cadeia. Lazy
+        # init pra não tocar o loop antes do startup.
+        self._http: httpx.AsyncClient | None = None
+
+    def _client(self) -> httpx.AsyncClient:
+        if self._http is None:
+            self._http = httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS)
+        return self._http
 
     async def shutdown(self) -> None:
+        if self._http is not None:
+            try:
+                await self._http.aclose()
+            except Exception:
+                logger.exception("Spotify httpx pool close failed")
+            self._http = None
         logger.info("Spotify service stopped.")
 
     def _client_token_valid(self) -> bool:
@@ -139,19 +156,19 @@ class SpotifyService:
         auth_str = f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}"
         b64_auth = base64.b64encode(auth_str.encode()).decode()
 
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-            response = await client.post(
-                "https://accounts.spotify.com/api/token",
-                data={
-                    "grant_type": "authorization_code",
-                    "code": code,
-                    "redirect_uri": SPOTIFY_REDIRECT_URI,
-                },
-                headers={
-                    "Authorization": f"Basic {b64_auth}",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-            )
+        client = self._client()
+        response = await client.post(
+            "https://accounts.spotify.com/api/token",
+            data={
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": SPOTIFY_REDIRECT_URI,
+            },
+            headers={
+                "Authorization": f"Basic {b64_auth}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
 
         data = response.json()
         access_token = data.get("access_token")
@@ -193,18 +210,18 @@ class SpotifyService:
             auth_str = f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}"
             b64_auth = base64.b64encode(auth_str.encode()).decode()
 
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-                response = await client.post(
-                    "https://accounts.spotify.com/api/token",
-                    data={
-                        "grant_type": "refresh_token",
-                        "refresh_token": token.refresh_token,
-                    },
-                    headers={
-                        "Authorization": f"Basic {b64_auth}",
-                        "Content-Type": "application/x-www-form-urlencoded",
-                    },
-                )
+            client = self._client()
+            response = await client.post(
+                "https://accounts.spotify.com/api/token",
+                data={
+                    "grant_type": "refresh_token",
+                    "refresh_token": token.refresh_token,
+                },
+                headers={
+                    "Authorization": f"Basic {b64_auth}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                },
+            )
 
             data = response.json()
             access_token = data.get("access_token")
@@ -227,18 +244,18 @@ class SpotifyService:
             return None
 
         async def fetch_current(access_token: str) -> httpx.Response:
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-                return await client.get(
-                    "https://api.spotify.com/v1/me/player/currently-playing",
-                    headers={"Authorization": f"Bearer {access_token}"},
-                )
+            client = self._client()
+            return await client.get(
+                "https://api.spotify.com/v1/me/player/currently-playing",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
 
         async def fetch_recent(access_token: str) -> httpx.Response:
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-                return await client.get(
-                    "https://api.spotify.com/v1/me/player/recently-played?limit=1",
-                    headers={"Authorization": f"Bearer {access_token}"},
-                )
+            client = self._client()
+            return await client.get(
+                "https://api.spotify.com/v1/me/player/recently-played?limit=1",
+                headers={"Authorization": f"Bearer {access_token}"},
+            )
 
         response = await fetch_current(token.access_token)
         if response.status_code == 401:
@@ -289,15 +306,15 @@ class SpotifyService:
         auth_str = f"{SPOTIFY_CLIENT_ID}:{SPOTIFY_CLIENT_SECRET}"
         b64_auth = base64.b64encode(auth_str.encode()).decode()
 
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-            response = await client.post(
-                "https://accounts.spotify.com/api/token",
-                data={"grant_type": "client_credentials"},
-                headers={
-                    "Authorization": f"Basic {b64_auth}",
-                    "Content-Type": "application/x-www-form-urlencoded",
-                },
-            )
+        client = self._client()
+        response = await client.post(
+            "https://accounts.spotify.com/api/token",
+            data={"grant_type": "client_credentials"},
+            headers={
+                "Authorization": f"Basic {b64_auth}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+        )
 
         if response.status_code != 200:
             logger.error(
@@ -329,11 +346,11 @@ class SpotifyService:
         if not access_token:
             return None
 
-        async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-            response = await client.get(
-                f"https://api.spotify.com/v1/tracks/{clean_track_id}",
-                headers={"Authorization": f"Bearer {access_token}"},
-            )
+        client = self._client()
+        response = await client.get(
+            f"https://api.spotify.com/v1/tracks/{clean_track_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+        )
 
         if response.status_code != 200:
             logger.error("Spotify track lookup failed: status=%s body=%s", response.status_code, response.text)
@@ -390,12 +407,12 @@ class SpotifyService:
         query = f'track:"{t}" artist:"{a}"'
         record: dict[str, str | None] | None = None
         try:
-            async with httpx.AsyncClient(timeout=HTTP_TIMEOUT_SECONDS) as client:
-                resp = await client.get(
-                    "https://api.spotify.com/v1/search",
-                    params={"q": query, "type": "track", "limit": 1, "market": "BR"},
-                    headers={"Authorization": f"Bearer {token}"},
-                )
+            client = self._client()
+            resp = await client.get(
+                "https://api.spotify.com/v1/search",
+                params={"q": query, "type": "track", "limit": 1, "market": "BR"},
+                headers={"Authorization": f"Bearer {token}"},
+            )
             if resp.status_code == 200:
                 items = ((resp.json().get("tracks") or {}).get("items") or [])
                 if items:

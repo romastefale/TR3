@@ -362,8 +362,13 @@ async def on_startup() -> None:
 
 @app.on_event("shutdown")
 async def on_shutdown() -> None:
+    from app.services.lastfm import lastfm_service  # import local: serviço só usado pra fechar o pool
+
     await shutdown_telegram_bot()
     await spotify_service.shutdown()
+    # Sprint 4 (S4.1): fecha pool httpx do Last.fm/Deezer. Importado
+    # localmente pra não poluir o topo do módulo (não há outro uso).
+    await lastfm_service.shutdown()
 
 
 @app.get("/healthz", status_code=200)
