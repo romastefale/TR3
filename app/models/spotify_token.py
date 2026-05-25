@@ -14,5 +14,5 @@ class SpotifyToken(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, index=True)
     access_token: Mapped[str] = mapped_column(String, nullable=False)
-    refresh_token: Mapped[str] = mapped_column(String, nullable=False)
+    refresh_token: Mapped[str | None] = mapped_column(String, nullable=True)
     expiration: Mapped[datetime] = mapped_column(DateTime, nullable=False)

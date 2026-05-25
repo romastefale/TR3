@@ -1,11 +1,15 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
+
+
+def _utcnow_naive() -> datetime:
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
 class TrackLike(Base):
@@ -19,4 +23,4 @@ class TrackLike(Base):
     track_name: Mapped[str | None] = mapped_column(String, nullable=True)
     artist_name: Mapped[str | None] = mapped_column(String, nullable=True)
     liked: Mapped[int | None] = mapped_column(Integer, nullable=True, default=1)
-    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=datetime.utcnow)
+    created_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, default=_utcnow_naive)

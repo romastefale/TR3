@@ -2,8 +2,7 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import FastAPI, Query, Request
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Request
 from sqlalchemy import text
 
 from aiogram import Bot, Dispatcher
@@ -23,7 +22,7 @@ from app.btb.relay import capture_bot_message as btb_capture_bot_message
 from app.btb.router import on_text as btb_on_text
 from app.btb.state import clear_waiting as btb_clear_waiting, get_session as btb_get_session
 from app.btb.storage import ensure_tables as btb_ensure_tables
-from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN
+from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN, validate_required_env
 from app.db.database import engine, init_db, run_migrations
 from app.moderation_tigrao import customize_router as tigrao_customize_router, ddx_router as tigrao_ddx_router, member_tag_router as tigrao_member_tag_router, pinned_media_router as tigrao_pinned_media_router, router as tigrao_router
 from app.moderation_tigrao.customize_router import tigrao_receive_group_photo
@@ -290,6 +289,13 @@ async def _handle_tigrao_waiting_media_direct(update: Update) -> bool:
 @app.on_event("startup")
 async def on_startup() -> None:
     global bot, _telegram_dispatcher_configured
+    missing_env = validate_required_env()
+    if missing_env:
+        logger.warning(
+            "STARTUP_MISSING_ENV_VARS vars=%s — features dependentes vão "
+            "falhar silenciosamente até serem configuradas",
+            ",".join(missing_env),
+        )
     install_music_proxy()
     init_db()
     run_migrations(engine)
@@ -343,25 +349,16 @@ def healthz() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@app.get("/spotify/login")
-def spotify_login(user_id: int = Query(...)) -> RedirectResponse:
-    return RedirectResponse(url=spotify_service.build_auth_url(user_id))
-
-
 @app.get("/callback")
 async def spotify_callback(code: str, state: str) -> dict[str, str]:
-    logger.error("CALLBACK RECEIVED")
-    logger.error("STATE RECEIVED: %s", state)
     user_id = spotify_service.resolve_user_id_from_state(state)
-    logger.error("RESOLVED USER_ID: %s", user_id)
     if user_id is None:
-        logger.error("INVALID STATE")
+        logger.warning("SPOTIFY_CALLBACK_INVALID_STATE")
         return {"status": "error", "message": "Invalid state. Use /login novamente."}
     try:
         replaced = await spotify_service.exchange_code_for_token(code, user_id)
-        logger.error("TOKEN FLOW COMPLETED")
-    except Exception as e:
-        logger.error("TOKEN FLOW FAILED: %s", e)
+    except Exception:
+        logger.exception("SPOTIFY_CALLBACK_TOKEN_FLOW_FAILED user_id=%s", user_id)
         raise
     # Avisa no privado do user se substituiu um login antigo ou se é a 1ª vez.
     if replaced is not None and bot is not None:

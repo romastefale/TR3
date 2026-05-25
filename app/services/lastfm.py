@@ -4,7 +4,7 @@ import hashlib
 import logging
 import re
 import unicodedata
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
 
@@ -99,7 +99,7 @@ class LastfmService:
         possa avisar quando substituiu uma conexão antiga.
         """
         clean = _clean_username(username)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         previous: str | None = None
         with SessionLocal() as db:
             existing = db.query(LastfmProfile).filter_by(user_id=user_id).first()
@@ -123,7 +123,7 @@ class LastfmService:
         Retorna `(novo_username, qtd_de_linhas_apagadas)`.
         """
         clean = _clean_username(username)
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc).replace(tzinfo=None)
         with SessionLocal() as db:
             deleted = (
                 db.query(LastfmProfile).filter_by(user_id=user_id).delete(synchronize_session=False)

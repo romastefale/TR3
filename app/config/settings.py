@@ -56,3 +56,21 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 if not DATABASE_URL:
     DATABASE_URL = f"sqlite:///{DATA_DIR / 'app.db'}"
+
+
+# Variáveis críticas: ausência delas faz o bot crashar silenciosamente em
+# runtime (sem login Spotify, sem capas Last.fm, sem dispatch Telegram).
+# validate_required_env() é chamado no startup e loga WARNING explícito
+# pra cada faltante — não interrompe boot pra permitir dev local parcial.
+REQUIRED_ENV_VARS: tuple[tuple[str, str], ...] = (
+    ("TELEGRAM_BOT_TOKEN", TELEGRAM_BOT_TOKEN),
+    ("SPOTIFY_CLIENT_ID", SPOTIFY_CLIENT_ID),
+    ("SPOTIFY_CLIENT_SECRET", SPOTIFY_CLIENT_SECRET),
+    ("LASTFM_API_KEY", LASTFM_API_KEY),
+    ("BASE_URL", BASE_URL if BASE_URL != "http://localhost:8000" else ""),
+)
+
+
+def validate_required_env() -> list[str]:
+    """Retorna lista de env vars críticas faltantes. Vazia = tudo ok."""
+    return [name for name, value in REQUIRED_ENV_VARS if not value]

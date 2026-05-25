@@ -5,7 +5,7 @@ import html
 import io
 import logging
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from PIL import Image
@@ -100,7 +100,7 @@ def _tile_html(entry: TnowEntry) -> str:
 
 def build_tnow_card_html(entries: list[TnowEntry], *, now: datetime | None = None) -> str:
     template = TEMPLATE_PATH.read_text(encoding="utf-8")
-    now = now or datetime.utcnow()
+    now = now or datetime.now(timezone.utc).replace(tzinfo=None)
     columns = _columns_for(len(entries))
     tiles = "\n".join(_tile_html(e) for e in entries) or "<div></div>"
     # Stamp visual: "23/05 • 18:42 BRT" usando hora local Brasília (UTC-3).

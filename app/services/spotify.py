@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import base64
+import hashlib
+import hmac
 import logging
-from datetime import datetime, timedelta
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from urllib.parse import quote
 
@@ -14,6 +17,7 @@ from app.config.settings import (
     SPOTIFY_CLIENT_SECRET,
     SPOTIFY_REDIRECT_URI,
     SPOTIFY_SCOPES,
+    TELEGRAM_BOT_TOKEN,
 )
 from app.db.database import SessionLocal
 from app.models.spotify_token import SpotifyToken
@@ -24,6 +28,40 @@ logger = logging.getLogger(__name__)
 _TRACK_SEARCH_CACHE_MAX = 4096
 _TRACK_SEARCH_TTL_HIT = timedelta(hours=24)
 _TRACK_SEARCH_TTL_MISS = timedelta(hours=2)
+
+# OAuth state HMAC: assina (user_id, expiry) com TELEGRAM_BOT_TOKEN como
+# segredo. Impede que um atacante forje um link de callback usando o
+# user_id de outra pessoa (account-hijack via state guessing).
+_STATE_TTL_SECONDS = 600
+_STATE_SIG_LEN = 16
+
+
+def _utcnow_naive() -> datetime:
+    """UTC naive equivalente a datetime.utcnow() (deprecated em 3.12)
+    sem mudar a semântica/legado dos datetimes armazenados no DB."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def _state_secret() -> bytes | None:
+    """Segredo HMAC pro state do OAuth. Sem TELEGRAM_BOT_TOKEN configurado,
+    retorna None — `build_auth_url`/`resolve_user_id_from_state` recusam
+    operar pra evitar segredo previsível/forjável."""
+    if not TELEGRAM_BOT_TOKEN:
+        return None
+    return TELEGRAM_BOT_TOKEN.encode()
+
+
+def _sanitize_token_error(data: Any) -> dict[str, Any]:
+    """Extrai só campos seguros (error/error_description) do payload
+    de erro do Spotify. Evita vazar access_token/refresh_token em log
+    caso a API devolva resposta híbrida."""
+    if not isinstance(data, dict):
+        return {"raw_type": type(data).__name__}
+    return {
+        k: data.get(k)
+        for k in ("error", "error_description", "message", "status")
+        if k in data
+    }
 
 
 class SpotifyService:
@@ -45,22 +83,54 @@ class SpotifyService:
         return bool(
             self._client_access_token
             and self._client_token_expiration
-            and self._client_token_expiration > datetime.utcnow() + timedelta(seconds=60)
+            and self._client_token_expiration > _utcnow_naive() + timedelta(seconds=60)
         )
 
     def build_auth_url(self, user_id: int) -> str:
+        secret = _state_secret()
+        if secret is None:
+            logger.error("Spotify OAuth: TELEGRAM_BOT_TOKEN ausente — login bloqueado")
+            raise RuntimeError(
+                "TELEGRAM_BOT_TOKEN não configurado — Spotify login indisponível."
+            )
+        expiry = int(time.time()) + _STATE_TTL_SECONDS
+        payload = f"{user_id}.{expiry}"
+        sig = hmac.new(secret, payload.encode(), hashlib.sha256).hexdigest()[:_STATE_SIG_LEN]
+        state = f"{payload}.{sig}"
         return (
             "https://accounts.spotify.com/authorize"
             f"?client_id={SPOTIFY_CLIENT_ID}"
             "&response_type=code"
             f"&redirect_uri={SPOTIFY_REDIRECT_URI}"
             f"&scope={quote(SPOTIFY_SCOPES)}"
-            f"&state={user_id}"
+            f"&state={state}"
         )
 
     def resolve_user_id_from_state(self, state: str) -> int | None:
+        if not state:
+            return None
+        secret = _state_secret()
+        if secret is None:
+            logger.error("Spotify OAuth: TELEGRAM_BOT_TOKEN ausente — state recusado")
+            return None
         try:
-            return int(state)
+            user_str, expiry_str, sig = state.split(".", 2)
+            expiry = int(expiry_str)
+        except (ValueError, AttributeError):
+            return None
+        if expiry < int(time.time()):
+            logger.warning("Spotify OAuth state expired")
+            return None
+        expected = hmac.new(
+            secret,
+            f"{user_str}.{expiry_str}".encode(),
+            hashlib.sha256,
+        ).hexdigest()[:_STATE_SIG_LEN]
+        if not hmac.compare_digest(expected, sig):
+            logger.warning("Spotify OAuth state signature mismatch")
+            return None
+        try:
+            return int(user_str)
         except ValueError:
             return None
 
@@ -94,10 +164,10 @@ class SpotifyService:
         expires_in = data.get("expires_in")
 
         if not access_token or not expires_in:
-            logger.error("Invalid Spotify token response: %s", data)
+            logger.error("Invalid Spotify token response: %s", _sanitize_token_error(data))
             return None
 
-        expiration = datetime.utcnow() + timedelta(seconds=int(expires_in))
+        expiration = _utcnow_naive() + timedelta(seconds=int(expires_in))
         replaced = False
         with SessionLocal() as db:
             existing = db.query(SpotifyToken).filter_by(user_id=user_id).first()
@@ -145,11 +215,11 @@ class SpotifyService:
             access_token = data.get("access_token")
             expires_in = data.get("expires_in")
             if not access_token or not expires_in:
-                logger.error("Spotify refresh failed: %s", data)
+                logger.error("Spotify refresh failed: %s", _sanitize_token_error(data))
                 return None
 
             token.access_token = access_token
-            token.expiration = datetime.utcnow() + timedelta(seconds=int(expires_in))
+            token.expiration = _utcnow_naive() + timedelta(seconds=int(expires_in))
             db.commit()
             db.refresh(token)
             return token
@@ -235,18 +305,24 @@ class SpotifyService:
             )
 
         if response.status_code != 200:
-            logger.error("Spotify client credentials token failed: %s", response.text)
+            logger.error(
+                "Spotify client credentials token failed: status=%s",
+                response.status_code,
+            )
             return None
 
         data = response.json()
         access_token = data.get("access_token")
         expires_in = data.get("expires_in")
         if not access_token or not expires_in:
-            logger.error("Invalid Spotify client credentials response: %s", data)
+            logger.error(
+                "Invalid Spotify client credentials response: %s",
+                _sanitize_token_error(data),
+            )
             return None
 
         self._client_access_token = str(access_token)
-        self._client_token_expiration = datetime.utcnow() + timedelta(seconds=int(expires_in))
+        self._client_token_expiration = _utcnow_naive() + timedelta(seconds=int(expires_in))
         return self._client_access_token
 
     async def get_track_by_id(self, track_id: str) -> dict[str, Any] | None:
@@ -305,7 +381,7 @@ class SpotifyService:
         if not a or not t:
             return None
         key = (a.lower(), t.lower())
-        now = datetime.utcnow()
+        now = _utcnow_naive()
         cached = self._track_search_cache.get(key)
         if cached and cached[1] > now:
             return cached[0]

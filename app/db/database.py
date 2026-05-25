@@ -26,6 +26,7 @@ Base = declarative_base()
 
 
 def run_migrations(engine) -> None:
+    dialect_name = engine.dialect.name
     with engine.begin() as conn:
         statements = [
             "ALTER TABLE track_plays ADD COLUMN track_name TEXT",
@@ -35,6 +36,13 @@ def run_migrations(engine) -> None:
             "ALTER TABLE track_likes ADD COLUMN liked INTEGER DEFAULT 1",
             "ALTER TABLE track_likes ADD COLUMN owner_user_id INTEGER",
         ]
+        # Postgres: relaxa refresh_token pra nullable (Spotify nem sempre
+        # devolve refresh em /api/token). SQLite ignora — schema legado já
+        # convive bem porque o código grava `refresh_token or ""`.
+        if dialect_name == "postgresql":
+            statements.append(
+                "ALTER TABLE spotify_tokens ALTER COLUMN refresh_token DROP NOT NULL"
+            )
         for stmt in statements:
             try:
                 conn.execute(text(stmt))
