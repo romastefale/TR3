@@ -188,6 +188,60 @@ def run_migrations(engine) -> None:
         except Exception:
             logger.warning("Sprint 12 likes→reactions migration failed", exc_info=True)
 
+        # Sprint X3: tabela de auditoria de reactions (TTL 24h) usada
+        # pelo painel rmod pra listar quem reagiu numa msg sem depender
+        # de @username. CREATE TABLE IF NOT EXISTS é idempotente; o
+        # Base.metadata.create_all() em init_db() também cria, mas
+        # mantemos aqui pra consistência com track_reactions e pra
+        # garantir colunas BigInteger explícitas em Postgres.
+        try:
+            if dialect_name == "postgresql":
+                conn.execute(
+                    text(
+                        """
+                        CREATE TABLE IF NOT EXISTS reaction_audit (
+                            id SERIAL PRIMARY KEY,
+                            chat_id BIGINT NOT NULL,
+                            message_id BIGINT NOT NULL,
+                            user_id BIGINT NOT NULL,
+                            user_name VARCHAR,
+                            user_username VARCHAR,
+                            emoji VARCHAR NOT NULL,
+                            created_at TIMESTAMP NOT NULL,
+                            CONSTRAINT uq_reaction_audit_msg_user_emoji
+                                UNIQUE (chat_id, message_id, user_id, emoji)
+                        )
+                        """
+                    )
+                )
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reaction_audit_chat_id ON reaction_audit(chat_id)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reaction_audit_user_id ON reaction_audit(user_id)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reaction_audit_created_at ON reaction_audit(created_at)"))
+            else:
+                conn.execute(
+                    text(
+                        """
+                        CREATE TABLE IF NOT EXISTS reaction_audit (
+                            id INTEGER PRIMARY KEY AUTOINCREMENT,
+                            chat_id INTEGER NOT NULL,
+                            message_id INTEGER NOT NULL,
+                            user_id INTEGER NOT NULL,
+                            user_name VARCHAR,
+                            user_username VARCHAR,
+                            emoji VARCHAR NOT NULL,
+                            created_at DATETIME NOT NULL,
+                            CONSTRAINT uq_reaction_audit_msg_user_emoji
+                                UNIQUE (chat_id, message_id, user_id, emoji)
+                        )
+                        """
+                    )
+                )
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reaction_audit_chat_id ON reaction_audit(chat_id)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reaction_audit_user_id ON reaction_audit(user_id)"))
+                conn.execute(text("CREATE INDEX IF NOT EXISTS ix_reaction_audit_created_at ON reaction_audit(created_at)"))
+        except Exception:
+            logger.warning("Sprint X3 reaction_audit table creation failed", exc_info=True)
+
 
 def init_db() -> None:
     try:
@@ -197,6 +251,7 @@ def init_db() -> None:
         from app.models.track_like import TrackLike  # noqa: F401
         from app.models.track_play import TrackPlay  # noqa: F401
         from app.models.track_reaction import TrackReaction  # noqa: F401  # Sprint 8
+        from app.models.reaction_audit import ReactionAudit  # noqa: F401  # Sprint X3
 
         Base.metadata.create_all(bind=engine)
         logger.info("Database initialized.")

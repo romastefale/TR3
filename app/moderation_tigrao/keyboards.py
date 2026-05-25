@@ -44,6 +44,40 @@ def reactions_mod_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
+def rmod_reactors_picker_keyboard(reactors: list[dict], nonce: str) -> InlineKeyboardMarkup:
+    """Sprint X3: picker de reactors (1 botão por user).
+
+    `reactors` é a lista (já ordenada e truncada pelo service) salva em
+    `session.payload['reactors']`. `nonce` é um token curto único por
+    render do picker, persistido em `session.payload['picker_nonce']`.
+
+    Callback format: `tigrao:rmod:pick:<nonce>:<user_id>`
+    - nonce: invalida cliques em pickers antigos quando um novo é
+      aberto (evita resolver pro user errado se o owner ignora um
+      picker antigo no histórico e abre outro fluxo).
+    - user_id: identidade imutável (não depende de índice).
+
+    Layout: 1 user por linha (nome + emojis recentes). Linhas finais
+    com fallback "digitar manualmente" e "cancelar". O botão "Voltar"
+    leva ao menu rmod (não cancela o fluxo todo).
+    """
+    rows: list[list[InlineKeyboardButton]] = []
+    for r in reactors:
+        name = (
+            r.get("user_name")
+            or (f"@{r['user_username']}" if r.get("user_username") else None)
+            or str(r.get("user_id"))
+        )
+        emojis = "".join(r.get("emojis", [])[:3])
+        label = f"{name} {emojis}".strip()
+        if len(label) > 60:
+            label = label[:57] + "..."
+        rows.append([_button(label, f"tigrao:rmod:pick:{nonce}:{r['user_id']}", "primary")])
+    rows.append([_button("Digitar manualmente", f"tigrao:rmod:manual:{nonce}", "primary")])
+    rows.append([_button("Voltar", "tigrao:rmod", "primary"), _button("Cancelar", "tigrao:rmod:cancel", "danger")])
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
 def rmod_duration_keyboard() -> InlineKeyboardMarkup:
     rows = [
         [_button("10 min", "tigrao:rmod:dur:10m", "primary"), _button("1 hora", "tigrao:rmod:dur:1h", "primary")],

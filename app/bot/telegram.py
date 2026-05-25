@@ -26,6 +26,7 @@ from app.services.lastfm import lastfm_service
 from app.services.likes import likes_service
 from app.services.music import music_service
 from app.services.reactions import reactions_service
+from app.services.reaction_audit import reaction_audit_service
 from app.services.spotify import spotify_service
 
 logger = logging.getLogger(__name__)
@@ -733,6 +734,25 @@ def _register_handlers(dp: Dispatcher) -> None:
         except Exception:
             logger.exception(
                 "MESSAGE_REACTION_FAILED chat=%s msg=%s user=%s",
+                event.chat.id, event.message_id, event.user.id,
+            )
+        # Sprint X3: log paralelo na tabela de auditoria (TTL 24h) pra
+        # o painel rmod listar quem reagiu numa msg/chat sem depender
+        # de @username. Falha aqui NÃO deve abortar o fluxo principal
+        # de tracking de cards — wrap independente.
+        try:
+            await reaction_audit_service.record_change(
+                chat_id=event.chat.id,
+                message_id=event.message_id,
+                user_id=event.user.id,
+                user_name=getattr(event.user, "full_name", None),
+                user_username=getattr(event.user, "username", None),
+                old_emojis=old_emojis,
+                new_emojis=new_emojis,
+            )
+        except Exception:
+            logger.exception(
+                "REACTION_AUDIT_HANDLER_FAILED chat=%s msg=%s user=%s",
                 event.chat.id, event.message_id, event.user.id,
             )
 

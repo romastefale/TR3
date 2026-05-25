@@ -38,8 +38,16 @@ from app.moderation_tigrao.keyboards import (
     reactions_mod_keyboard,
     rmod_confirm_keyboard,
     rmod_duration_keyboard,
+    rmod_reactors_picker_keyboard,
     user_actions_keyboard,
 )
+from app.services.reaction_audit import reaction_audit_service
+import secrets as _secrets
+
+
+def _new_picker_nonce() -> str:
+    """Sprint X3: token curto pra invalidar pickers antigos."""
+    return _secrets.token_urlsafe(6)
 from app.moderation_tigrao.parsers import parse_chat_id, parse_duration, parse_message_link, parse_user_id
 from app.moderation_tigrao.permissions import OWNER_ID, is_owner_callback, is_owner_private_message
 from app.moderation_tigrao.state import (
@@ -465,12 +473,43 @@ async def tigrao_private_text(message: Message) -> None:
         session.payload["link_chat_id"] = link_chat_id
         session.payload["link_msg_id"] = link_msg_id
         if session.selected_action == "rmod_del_user_msg":
+            # Sprint X3: em vez de pedir @username (que falha quando o
+            # bot nunca interagiu com o user), busca a lista de quem
+            # reagiu nessa msg (últimas 24h) e mostra como botões.
+            # Se o link aponta pra outro chat e a lista vier vazia
+            # (msg antiga ou bot não viu reactions), cai no fallback
+            # de texto manual.
+            reactors = []
+            try:
+                if isinstance(link_chat_id, int):
+                    reactors = reaction_audit_service.list_message_reactors(
+                        chat_id=link_chat_id, message_id=int(link_msg_id),
+                    )
+            except Exception:
+                logger.exception("RMOD_PICKER_QUERY_FAILED chat=%s msg=%s", link_chat_id, link_msg_id)
+            if reactors:
+                nonce = _new_picker_nonce()
+                session.payload["reactors"] = reactors
+                session.payload["picker_nonce"] = nonce
+                session.waiting_for = None
+                touch_session()
+                await message.answer(
+                    "Tigrão — escolha o reactor\n\n"
+                    f"Mensagem: {link_chat_id} / {link_msg_id}\n"
+                    f"Reactors detectados (últimas 24h): {len(reactors)}\n\n"
+                    "Toque na pessoa cuja reaction deve ser apagada.",
+                    reply_markup=rmod_reactors_picker_keyboard(reactors, nonce),
+                )
+                return
+            # Fallback: sem dados no audit → pede manual.
             session.waiting_for = "rmod_user"
             touch_session()
             await message.answer(
                 "Tigrão — apagar reaction de 1 pessoa\n\n"
                 f"Mensagem: {link_chat_id} / {link_msg_id}\n\n"
-                "Envie agora o user_id numérico OU @username da pessoa cuja reaction deve ser apagada nessa mensagem."
+                "Não encontrei reactions rastreadas dessa msg nas últimas 24h "
+                "(o bot só vê reactions feitas após estar admin com message_reaction ligado).\n\n"
+                "Envie agora o user_id numérico OU @username da pessoa."
             )
             return
         # rmod_del_all_msg → direto pra confirmação
@@ -981,11 +1020,41 @@ async def tigrao_rmod_del_user_chat(callback: CallbackQuery) -> None:
             await callback.message.edit_text(_need_group_text(), reply_markup=home_keyboard())
         await callback.answer()
         return
+    # Sprint X3: tenta mostrar picker de reactors recentes do chat
+    # antes de pedir @username. Se nada rastreado, cai no fluxo texto.
+    reactors = []
+    try:
+        reactors = reaction_audit_service.list_chat_recent_reactors(
+            chat_id=int(session.selected_chat_id),
+        )
+    except Exception:
+        logger.exception("RMOD_PICKER_CHAT_QUERY_FAILED chat=%s", session.selected_chat_id)
+    if reactors:
+        nonce = _new_picker_nonce()
+        set_action("rmod_del_user_chat", waiting_for=None, reactors=reactors, picker_nonce=nonce)
+        if callback.message:
+            try:
+                await callback.message.edit_text(
+                    "Tigrão — apagar reactions de 1 pessoa (grupo inteiro)\n\n"
+                    f"Grupo: {session.selected_chat_id}\n"
+                    f"Reactors recentes (últimas 24h): {len(reactors)}\n\n"
+                    "Toque na pessoa cujas reactions devem ser apagadas no grupo todo.",
+                    reply_markup=rmod_reactors_picker_keyboard(reactors, nonce),
+                )
+            except TelegramBadRequest:
+                # Mensagem antiga/não editável → manda nova.
+                await callback.message.answer(
+                    f"Tigrão — escolha o reactor ({len(reactors)} recentes)",
+                    reply_markup=rmod_reactors_picker_keyboard(reactors, nonce),
+                )
+        await callback.answer()
+        return
     set_action("rmod_del_user_chat", waiting_for="rmod_user")
     if callback.message:
         await callback.message.edit_text(
             "Tigrão — apagar reactions de 1 pessoa (grupo inteiro)\n\n"
             f"Grupo: {session.selected_chat_id}\n\n"
+            "Sem reactors rastreados nas últimas 24h.\n"
             "Envie agora o user_id numérico OU @username do alvo.\n"
             "Vai apagar até 10000 reactions RECENTES dessa pessoa em TODAS as mensagens deste grupo."
         )
@@ -1019,11 +1088,39 @@ async def tigrao_rmod_mute_react(callback: CallbackQuery) -> None:
             await callback.message.edit_text(_need_group_text(), reply_markup=home_keyboard())
         await callback.answer()
         return
+    # Sprint X3: picker antes de pedir @username.
+    reactors = []
+    try:
+        reactors = reaction_audit_service.list_chat_recent_reactors(
+            chat_id=int(session.selected_chat_id),
+        )
+    except Exception:
+        logger.exception("RMOD_PICKER_MUTE_QUERY_FAILED chat=%s", session.selected_chat_id)
+    if reactors:
+        nonce = _new_picker_nonce()
+        set_action("rmod_mute_react", waiting_for=None, reactors=reactors, picker_nonce=nonce)
+        if callback.message:
+            try:
+                await callback.message.edit_text(
+                    "Tigrão — silenciar reactor\n\n"
+                    f"Grupo: {session.selected_chat_id}\n"
+                    f"Reactors recentes (últimas 24h): {len(reactors)}\n\n"
+                    "Toque na pessoa que vai perder a permissão de reagir.",
+                    reply_markup=rmod_reactors_picker_keyboard(reactors, nonce),
+                )
+            except TelegramBadRequest:
+                await callback.message.answer(
+                    f"Tigrão — silenciar reactor ({len(reactors)} recentes)",
+                    reply_markup=rmod_reactors_picker_keyboard(reactors, nonce),
+                )
+        await callback.answer()
+        return
     set_action("rmod_mute_react", waiting_for="rmod_user")
     if callback.message:
         await callback.message.edit_text(
             "Tigrão — silenciar reactor\n\n"
             f"Grupo: {session.selected_chat_id}\n\n"
+            "Sem reactors rastreados nas últimas 24h.\n"
             "Envie agora o user_id numérico OU @username do alvo.\n"
             "Apenas a permissão de reagir será removida; o resto fica preservado."
         )
@@ -1049,7 +1146,145 @@ async def tigrao_rmod_duration(callback: CallbackQuery) -> None:
     session.payload["duration_label"] = raw
     touch_session()
     if callback.message:
-        await callback.message.edit_text(_rmod_confirm_text(), reply_markup=rmod_confirm_keyboard())
+        try:
+            await callback.message.edit_text(_rmod_confirm_text(), reply_markup=rmod_confirm_keyboard())
+        except TelegramBadRequest:
+            await callback.message.answer(_rmod_confirm_text(), reply_markup=rmod_confirm_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("tigrao:rmod:pick:"))
+async def tigrao_rmod_pick(callback: CallbackQuery) -> None:
+    """Sprint X3: escolhe reactor a partir do picker.
+
+    callback_data: `tigrao:rmod:pick:<nonce>:<user_id>`
+    - Valida nonce vs session.payload['picker_nonce']: clique em
+      picker antigo (após owner abrir outro fluxo) é rejeitado.
+    - user_id é identidade imutável; lookup na lista de reactors
+      só serve pra recuperar o label amigável.
+    Avança o fluxo: mute → escolher duração; del_* → confirmação.
+    """
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    session = get_session()
+    action = session.selected_action or ""
+    if action not in {"rmod_del_user_msg", "rmod_del_user_chat", "rmod_mute_react"}:
+        await callback.answer("Fluxo inválido.", show_alert=True)
+        return
+    parts = (callback.data or "").split(":")
+    # ['tigrao','rmod','pick',nonce,user_id] → exatamente 5 partes
+    if len(parts) != 5:
+        await callback.answer("Callback malformado. Reabra o fluxo.", show_alert=True)
+        return
+    nonce, user_id_raw = parts[3], parts[4]
+    expected_nonce = session.payload.get("picker_nonce")
+    if not expected_nonce or nonce != expected_nonce:
+        await callback.answer(
+            "Esse picker é de um fluxo antigo. Reabra o menu Moderar Reactions.",
+            show_alert=True,
+        )
+        return
+    try:
+        target_user_id = int(user_id_raw)
+    except ValueError:
+        await callback.answer("user_id inválido no callback.", show_alert=True)
+        return
+    if target_user_id == OWNER_ID:
+        await callback.answer("Você não pode se moderar.", show_alert=True)
+        return
+    reactors = session.payload.get("reactors") or []
+    reactor = next((r for r in reactors if int(r.get("user_id", 0)) == target_user_id), None)
+    if reactor is None:
+        await callback.answer("Seleção fora da lista atual.", show_alert=True)
+        return
+    target_label = (
+        reactor.get("user_name")
+        or (f"@{reactor['user_username']}" if reactor.get("user_username") else None)
+        or str(target_user_id)
+    )
+    session.payload["target_user_id"] = target_user_id
+    session.payload["target_label"] = target_label
+    # Invalida o picker (qualquer clique posterior em outro botão dessa
+    # mesma keyboard cai no nonce-mismatch) e libera memória da lista.
+    session.payload.pop("reactors", None)
+    session.payload.pop("picker_nonce", None)
+    touch_session()
+    if action == "rmod_mute_react":
+        if callback.message:
+            try:
+                await callback.message.edit_text(
+                    "Tigrão — duração do silêncio de reactions\n\n"
+                    f"Grupo: {session.selected_chat_id}\n"
+                    f"Alvo: {target_label} ({target_user_id})\n\n"
+                    "Escolha por quanto tempo o alvo ficará sem poder reagir.",
+                    reply_markup=rmod_duration_keyboard(),
+                )
+            except TelegramBadRequest:
+                await callback.message.answer(
+                    f"Alvo: {target_label} ({target_user_id}) — escolha a duração:",
+                    reply_markup=rmod_duration_keyboard(),
+                )
+        await callback.answer()
+        return
+    # del_user_msg ou del_user_chat → confirmação direta
+    if callback.message:
+        try:
+            await callback.message.edit_text(_rmod_confirm_text(), reply_markup=rmod_confirm_keyboard())
+        except TelegramBadRequest:
+            await callback.message.answer(_rmod_confirm_text(), reply_markup=rmod_confirm_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("tigrao:rmod:manual"))
+async def tigrao_rmod_manual(callback: CallbackQuery) -> None:
+    """Sprint X3: fallback do picker — pede user_id/@username em texto.
+
+    callback_data: `tigrao:rmod:manual:<nonce>` (nonce bind ao picker
+    ativo). Rejeita cliques em pickers antigos pra evitar que um botão
+    stale altere o fluxo atual.
+
+    Reaproveita o handler `rmod_user` existente (waiting_for='rmod_user').
+    Mantém compat com cenários onde o reactor não está no audit (msg
+    antiga, reactions pré-deploy do bot como admin, etc).
+    """
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+    session = get_session()
+    action = session.selected_action or ""
+    if action not in {"rmod_del_user_msg", "rmod_del_user_chat", "rmod_mute_react"}:
+        await callback.answer("Fluxo inválido.", show_alert=True)
+        return
+    parts = (callback.data or "").split(":")
+    # ['tigrao','rmod','manual',nonce] → 4 partes
+    if len(parts) != 4:
+        await callback.answer("Callback malformado. Reabra o fluxo.", show_alert=True)
+        return
+    nonce = parts[3]
+    expected_nonce = session.payload.get("picker_nonce")
+    if not expected_nonce or nonce != expected_nonce:
+        await callback.answer(
+            "Esse botão é de um fluxo antigo. Reabra o menu Moderar Reactions.",
+            show_alert=True,
+        )
+        return
+    session.payload.pop("reactors", None)
+    session.payload.pop("picker_nonce", None)
+    session.waiting_for = "rmod_user"
+    touch_session()
+    if callback.message:
+        try:
+            await callback.message.edit_text(
+                "Tigrão — digitar alvo manualmente\n\n"
+                f"Grupo: {session.selected_chat_id}\n\n"
+                "Envie agora o user_id numérico OU @username do alvo.\n"
+                "Dica: @username só resolve se o bot já interagiu com a pessoa antes."
+            )
+        except TelegramBadRequest:
+            await callback.message.answer(
+                "Tigrão — envie agora o user_id numérico OU @username do alvo."
+            )
     await callback.answer()
 
 
