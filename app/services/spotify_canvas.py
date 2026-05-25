@@ -35,6 +35,31 @@ CANVAS_TOKEN_URL_ANON = "https://open.spotify.com/get_access_token?reason=transp
 CANVAS_TOKEN_URL_COOKIE = "https://open.spotify.com/api/token?reason=transport&productType=web_player"
 CANVAS_API_URL = "https://spclient.wg.spotify.com/canvaz-cache/v0/canvases"
 CANVAS_URL_RE = re.compile(rb"https://canvaz\.scdn\.co/[^\x00\s\"'<>]+")
+
+# Proxy terceirizado: canvasdownloader.com já tem IP residencial / parceria
+# com o Spotify pra atravessar o bloqueio de datacenter. Devolve HTML com
+# <video src="https://canvaz.scdn.co/...">. A gente regexa o src e baixa
+# direto do CDN oficial (mesmo SSRF guard de antes).
+#
+# Trade-offs aceitos (estudados):
+# - É um terceiro: se ele cair, /tcanvas cai pra /playing (fallback igual hoje)
+# - Cloudflare na frente: User-Agent realista + ~50 req/dia esperado = bem abaixo
+#   de qualquer limite razoável. Sem captcha visível em 2026
+# - Privacidade: a gente expõe pra ele só o track_id público do Spotify
+#   (mesmo dado que o user vê na URL). Sem user_id, sem token nosso
+# - Cache de 24h por track_id (já existente) reduz drasticamente a frequência
+CANVASDOWNLOADER_URL = "https://www.canvasdownloader.com/canvas"
+CANVASDOWNLOADER_TIMEOUT_SECONDS = 8.0
+CANVASDOWNLOADER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,pt-BR;q=0.8",
+    "Referer": "https://www.canvasdownloader.com/",
+}
 TOKEN_HEADERS = {
     "Accept": "application/json, text/plain, */*",
     "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
@@ -171,22 +196,90 @@ class SpotifyCanvasService:
             if cached is not None and now < cached[1]:
                 return cached[0]
             try:
-                access_token = await self._get_access_token()
-                if not access_token:
-                    logger.warning("Spotify Canvas skipped: token unavailable")
-                    # NÃO cacheia falha de token (problema transitório).
-                    return None
-                canvas_url = await self._fetch_canvas_url(clean_track_id, access_token)
+                # CAMINHO PRIMÁRIO: canvasdownloader.com (passa por Railway).
+                # Não exige token, sp_dc, nem TOTP — terceiriza o problema do
+                # bloqueio de datacenter pra um proxy que tem IP/parceria boa.
+                canvas_url = await self._fetch_via_canvasdownloader(clean_track_id)
+
+                # FALLBACK (opcional): caminho direto pelo Spotify, só se o
+                # owner explicitamente configurou um sp_dc cookie. Sem cookie,
+                # esse caminho falha em datacenter — nem tenta. Quando o
+                # canvasdownloader cair, esse pode salvar o dia se o cookie
+                # estiver setado.
+                if canvas_url is None and SPOTIFY_CANVAS_SP_DC:
+                    logger.info(
+                        "Spotify Canvas: canvasdownloader miss, tentando caminho direto (sp_dc)"
+                    )
+                    access_token = await self._get_access_token()
+                    if access_token:
+                        canvas_url = await self._fetch_canvas_url(clean_track_id, access_token)
+
                 if canvas_url:
                     logger.info("Spotify Canvas found: track_id=%s", clean_track_id)
                 else:
                     logger.info("Spotify Canvas not found: track_id=%s", clean_track_id)
                 # Cacheia resultado (positivo OU negativo) com TTL.
+                # Negativo evita martelar canvasdownloader em faixas sem Canvas.
                 self._url_cache[clean_track_id] = (canvas_url, now + CANVAS_URL_CACHE_TTL_SECONDS)
                 return canvas_url
             except Exception:
                 logger.exception("Spotify Canvas lookup failed: track_id=%s", clean_track_id)
                 return None
+
+    async def _fetch_via_canvasdownloader(self, track_id: str) -> str | None:
+        """Resolve Canvas URL via canvasdownloader.com (proxy terceirizado).
+
+        O site faz a chamada autenticada ao Spotify do lado dele e devolve
+        HTML com <video src="https://canvaz.scdn.co/...">. A gente regexa
+        o src e devolve. Falhas são logadas como WARN (não exception)
+        porque é caminho esperado falhar às vezes — chamador cai pro
+        próximo fallback ou pro /playing.
+
+        Segurança:
+        - Só passa o track_id público (mesmo dado da URL do Spotify)
+        - Não envia user_id, token, ou qualquer info do nosso bot
+        - URL extraída é validada em download_canvas_bytes (SSRF guard
+          já existente: só aceita canvaz.scdn.co)
+        - Timeout curto (8s) — se o site travar, fail fast
+        """
+        track_url = f"https://open.spotify.com/track/{track_id}"
+        try:
+            async with httpx.AsyncClient(
+                timeout=CANVASDOWNLOADER_TIMEOUT_SECONDS,
+                follow_redirects=True,
+                headers=CANVASDOWNLOADER_HEADERS,
+            ) as client:
+                response = await client.get(
+                    CANVASDOWNLOADER_URL, params={"link": track_url}
+                )
+        except Exception:
+            logger.warning(
+                "Canvas proxy request error: track_id=%s", track_id, exc_info=True
+            )
+            return None
+        if response.status_code != 200:
+            logger.warning(
+                "Canvas proxy non-200: track_id=%s status=%s",
+                track_id,
+                response.status_code,
+            )
+            return None
+        # Reusa o regex já compilado pro CDN oficial — qualquer URL no HTML
+        # que aponte pro canvaz.scdn.co é o que a gente quer. Se o site
+        # mudar a estrutura, o regex continua funcionando enquanto a URL
+        # do CDN aparecer em algum lugar.
+        match = CANVAS_URL_RE.search(response.content)
+        if not match:
+            logger.info(
+                "Canvas proxy: HTML sem URL do CDN (provavelmente sem Canvas) track_id=%s",
+                track_id,
+            )
+            return None
+        try:
+            return match.group(0).decode()
+        except UnicodeDecodeError:
+            logger.warning("Canvas proxy: URL não-utf8 track_id=%s", track_id)
+            return None
 
     async def download_canvas_bytes(self, url: str) -> bytes | None:
         """Baixa o vídeo Canvas pra memória, com teto de tamanho.
