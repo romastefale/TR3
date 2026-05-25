@@ -53,3 +53,4 @@ Features 9.x/10.0 já relevantes ao projeto:
 - Estudos e propostas: tabela + impacto/esforço, conciso
 - Nunca implementar sem pedido explícito
 - Quando perguntar sobre Bot API, assumir 10.0 (não 8.x)
+- **Interface SEM emojis.** Usar apenas cores nativas de botão (`style="danger"`/`"success"`/`"primary"`) pra sinalização visual. Inclui: nenhum emoji em texto de botão, em header de painel, em mensagens de confirmação, em cards de detecção. Texto limpo + cor.
