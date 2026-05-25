@@ -1,12 +1,13 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import hmac
 import logging
 import re
 import time
 
 import httpx
-import pyotp
 
 from app.config.settings import (
     SPOTIFY_CANVAS_ENABLED,
@@ -33,31 +34,33 @@ CANVAS_TOKEN_BACKOFF_SECONDS = 10 * 60
 CANVAS_DOWNLOAD_MAX_BYTES = 8 * 1024 * 1024
 CANVAS_DOWNLOAD_TIMEOUT_SECONDS = 10.0
 
-# Endpoint anônimo do web player. Funciona de IPs residenciais; IPs de
-# datacenter (Railway, AWS etc) tipicamente recebem `403 URL Blocked` da
-# camada upstream (Cloudflare/Akamai) — daí a necessidade do sp_dc cookie.
-CANVAS_TOKEN_URL_ANON = "https://open.spotify.com/get_access_token?reason=transport&productType=web_player"
-# Endpoint autenticado por cookie de sessão (sp_dc) — trata como browser
-# logado, atravessa o bloqueio de datacenter. Cookie dura ~1 ano; o token
-# derivado dura ~1h (já cacheado em memória).
-CANVAS_TOKEN_URL_COOKIE = "https://open.spotify.com/api/token?reason=transport&productType=web_player"
+# Endpoint único do web player (cookie + anon usam o mesmo). Espera os
+# params TOTP-signed (reason=init, productType=web-player COM HÍFEN,
+# totp, totpServer, totpVer). Validado ao vivo em 2026: a versão SEM
+# TOTP retorna 403 de datacenter; com TOTP correto retorna 200.
+CANVAS_TOKEN_URL = "https://open.spotify.com/api/token"
 CANVAS_API_URL = "https://spclient.wg.spotify.com/canvaz-cache/v0/canvases"
 CANVAS_URL_RE = re.compile(rb"https://canvaz\.scdn\.co/[^\x00\s\"'<>]+")
 
-# Método TOTP (introduzido pelo Spotify em 2024 pro endpoint anônimo).
-# Secret + clientId rotacionam ~6 meses. Fonte: glomatico/votify, KraXen72,
-# spotify-aac-downloader. Se quebrar (token 400 ou 401 ao invés de 403),
-# checar repos pra valor atualizado. 403 = bloqueio de IP (não secret errado).
-SPOTIFY_TOTP_CANDIDATES: list[tuple[str, str]] = [
-    # (secret_base32, clientId) — tentamos em ordem; primeiro que der 200 vence.
-    ("S7YF4O6G6SJS6Y2I", "764836690740445fb56501729424e8c1"),
-    ("GU2TANZRGQ2TQNJTGQ4DONBZGM2DMNTYME3DKMTYGY2DOMTSGE", "650271733a5c4c578ed18d0981977df2"),
-]
-CANVAS_TOKEN_URL_TOTP_TEMPLATE = (
-    "https://open.spotify.com/get_access_token?"
-    "reason=transport&productType=web_player&"
-    "totp={totp}&totpVer=2&ts={ts}&clientId={client_id}"
+# Fonte dinâmica do secret TOTP. O Spotify rotaciona o segredo ~a cada
+# poucos meses; o repo `thereallo/totp-secrets` (usado pelo glomatico/votify)
+# mantém o dicionário versionado atualizado. A gente faz fetch + cacheia
+# por 24h. Se a fonte cair, usa o fallback hardcoded (última versão
+# conhecida estável, validada ao vivo).
+TOTP_SECRETS_URL = (
+    "https://git.gay/thereallo/totp-secrets/raw/branch/main/secrets/secretDict.json"
 )
+TOTP_SECRETS_TTL_SECONDS = 24 * 3600
+TOTP_SECRETS_FALLBACK: dict[str, list[int]] = {
+    # Versão 61 — verificada ao vivo no Replit em 2026 contra o endpoint
+    # /api/token: derivada via XOR (i%33)+9, gerou token 200 OK.
+    "61": [
+        44, 55, 47, 42, 70, 40, 34, 114, 76, 74, 50, 111, 120, 97, 75, 76,
+        94, 102, 43, 69, 49, 120, 118, 80, 64, 78,
+    ],
+}
+TOTP_PERIOD = 30
+TOTP_DIGITS = 6
 
 # Proxy terceirizado: canvasdownloader.com já tem IP residencial / parceria
 # com o Spotify pra atravessar o bloqueio de datacenter. Devolve HTML com
@@ -204,6 +207,11 @@ class SpotifyCanvasService:
         # não martelar o canvaz-cache em músicas que sabidamente não têm Canvas.
         self._url_cache: dict[str, tuple[str | None, float]] = {}
         self._url_lock = asyncio.Lock()
+        # Cache do secretDict.json (versão + ciphertext). Atualiza a cada 24h.
+        self._totp_version: str | None = None
+        self._totp_secret: bytes | None = None
+        self._totp_expires_at: float = 0.0
+        self._totp_lock = asyncio.Lock()
 
     async def get_canvas_url(self, track_id: str) -> str | None:
         clean_track_id = (track_id or "").strip()
@@ -259,8 +267,11 @@ class SpotifyCanvasService:
                                 "Spotify Canvas via TOKEN_DIRECT: track_id=%s",
                                 clean_track_id,
                             )
-                        else:
-                            # Spotify oficial disse "sem canvas" → confiável.
+                        elif SPOTIFY_CANVAS_SP_DC:
+                            # Só conta como "Spotify oficial disse não" se a gente
+                            # mandou o cookie sp_dc. Sem cookie o token é anônimo
+                            # e a resposta vem vazia pra TUDO — não pode virar
+                            # cache autoritativo de 24h ou envenena o cache.
                             negative_is_authoritative = True
 
                 # Decide TTL do cache:
@@ -392,96 +403,135 @@ class SpotifyCanvasService:
             return token
 
     async def _fetch_access_token(self) -> str | None:
-        """Cascata de aquisição de token (do mais robusto pro mais frágil):
+        """Pega token via /api/token TOTP-assinado (com cookie se houver).
 
-        1. sp_dc cookie (se configurado) — atravessa bloqueio de datacenter,
-           ~99% de sucesso. Cookie dura ~1 ano.
-        2. TOTP (novo método 2024+) — funciona em janelas que o Cloudflare
-           libera; sem cookie, sem credencial. Em IP bloqueado dá 403 e
-           a gente ativa backoff de 10min.
-        3. Anônimo legacy — quase sempre 403 desde 2024, mantido por
-           compat caso o Spotify reverta.
+        Método único (descoberto em maio/2026 inspecionando glomatico/votify):
+        o endpoint correto é `/api/token` com params `reason=init`,
+        `productType=web-player` (HÍFEN, não underscore), `totp`, `totpServer`
+        e `totpVer` derivados do `secretDict.json` versionado.
 
-        Se TODAS as tentativas resultarem em 403, ativa backoff pra não
-        martelar o endpoint até a próxima janela.
+        Se SPOTIFY_CANVAS_SP_DC estiver setado, anexa como cookie — o token
+        retornado vira `isAnonymous=false` e consegue ler o canvaz-cache.
+        Sem cookie, retorna token anônimo (autentica mas canvas vem vazio).
+
+        Em 403 com "URL Blocked" (datacenter sem cookie reconhecido), ativa
+        backoff de 10min pra não martelar.
         """
-        if SPOTIFY_CANVAS_SP_DC:
-            token = await self._fetch_token_with_cookie()
-            if token:
-                return token
-            logger.warning(
-                "Spotify Canvas: sp_dc não devolveu token (cookie expirado/inválido)"
-            )
-
-        # TOTP: tenta cada candidato (secret, clientId).
-        for secret, client_id in SPOTIFY_TOTP_CANDIDATES:
-            token, was_blocked = await self._fetch_token_totp(secret, client_id)
-            if token:
-                return token
-            if was_blocked:
-                # 403 do upstream: outros candidatos vão dar igual, e o
-                # legacy também. Ativa backoff e desiste por enquanto.
-                self._token_blocked_until = time.time() + CANVAS_TOKEN_BACKOFF_SECONDS
-                logger.warning(
-                    "Spotify Canvas token endpoint BLOCKED (datacenter IP). "
-                    "Backoff %ss. Configure SPOTIFY_CANVAS_SP_DC pra 99%% hit rate.",
-                    CANVAS_TOKEN_BACKOFF_SECONDS,
-                )
-                return None
-
-        # Último recurso: anônimo legacy.
-        return await self._fetch_token_anonymous()
-
-    async def _fetch_token_totp(
-        self, secret: str, client_id: str
-    ) -> tuple[str | None, bool]:
-        """Gera TOTP HMAC-SHA1 e tenta o endpoint anônimo assinado.
-
-        Retorna (token, blocked_by_upstream). `blocked_by_upstream=True`
-        sinaliza pro chamador ativar backoff (não adianta tentar outros).
-        """
-        try:
-            totp_code = pyotp.TOTP(secret).now()
-            ts = int(time.time() * 1000)
-            url = CANVAS_TOKEN_URL_TOTP_TEMPLATE.format(
-                totp=totp_code, ts=ts, client_id=client_id
-            )
-            async with httpx.AsyncClient(
-                timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS, follow_redirects=True
-            ) as client:
-                response = await client.get(url, headers=TOKEN_HEADERS)
-        except Exception:
-            logger.exception("Spotify Canvas TOTP token request error")
-            return None, False
-        # 403 com "URL Blocked" = upstream IP block, não vale insistir.
-        if response.status_code == 403 and "URL Blocked" in response.text:
-            return None, True
-        token = self._extract_token(response, source=f"totp[{client_id[:6]}]")
-        return token, False
-
-    async def _fetch_token_with_cookie(self) -> str | None:
+        secret_info = await self._get_totp_secret()
+        if not secret_info:
+            logger.warning("Spotify Canvas: sem secret TOTP — sem token possível")
+            return None
+        version, secret_bytes = secret_info
+        totp_code = self._generate_totp(secret_bytes)
+        params = {
+            "reason": "init",
+            "productType": "web-player",
+            "totp": totp_code,
+            "totpServer": totp_code,
+            "totpVer": version,
+        }
         headers = dict(TOKEN_HEADERS)
-        headers["Cookie"] = f"sp_dc={SPOTIFY_CANVAS_SP_DC}"
+        source = "anon"
+        if SPOTIFY_CANVAS_SP_DC:
+            headers["Cookie"] = f"sp_dc={SPOTIFY_CANVAS_SP_DC}"
+            source = "cookie"
         try:
             async with httpx.AsyncClient(
                 timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS, follow_redirects=True
             ) as client:
-                response = await client.get(CANVAS_TOKEN_URL_COOKIE, headers=headers)
+                response = await client.get(
+                    CANVAS_TOKEN_URL, params=params, headers=headers
+                )
         except Exception:
-            logger.exception("Spotify Canvas cookie token request error")
+            logger.exception("Spotify Canvas token request error source=%s", source)
             return None
-        return self._extract_token(response, source="cookie")
+        if response.status_code == 403 and "URL Blocked" in response.text:
+            self._token_blocked_until = time.time() + CANVAS_TOKEN_BACKOFF_SECONDS
+            logger.warning(
+                "Spotify Canvas token BLOCKED (datacenter IP) source=%s — "
+                "backoff %ss. Configure SPOTIFY_CANVAS_SP_DC pra atravessar.",
+                source,
+                CANVAS_TOKEN_BACKOFF_SECONDS,
+            )
+            return None
+        return self._extract_token(response, source=f"{source}/v{version}")
 
-    async def _fetch_token_anonymous(self) -> str | None:
-        try:
-            async with httpx.AsyncClient(
-                timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS, follow_redirects=True
-            ) as client:
-                response = await client.get(CANVAS_TOKEN_URL_ANON, headers=TOKEN_HEADERS)
-        except Exception:
-            logger.exception("Spotify Canvas anonymous token request error")
-            return None
-        return self._extract_token(response, source="anon")
+    async def _get_totp_secret(self) -> tuple[str, bytes] | None:
+        """Retorna (version, derived_secret_bytes) com cache de 24h.
+
+        Fast path: cache em memória. Slow path sob lock: faz fetch do
+        secretDict.json (votify-style), pega max(version), aplica a função
+        de derivação XOR e cacheia. Se o fetch falhar, usa o fallback
+        hardcoded — assim a feature nunca quebra por causa de uma fonte
+        externa offline.
+        """
+        now = time.time()
+        if self._totp_secret and self._totp_version and now < self._totp_expires_at:
+            return self._totp_version, self._totp_secret
+        async with self._totp_lock:
+            now = time.time()
+            if self._totp_secret and self._totp_version and now < self._totp_expires_at:
+                return self._totp_version, self._totp_secret
+            secrets_dict: dict[str, list[int]] | None = None
+            try:
+                async with httpx.AsyncClient(
+                    timeout=SPOTIFY_CANVAS_TIMEOUT_SECONDS, follow_redirects=True
+                ) as client:
+                    response = await client.get(TOTP_SECRETS_URL)
+                if response.status_code == 200:
+                    parsed = response.json()
+                    if isinstance(parsed, dict) and parsed:
+                        secrets_dict = parsed
+                        logger.info(
+                            "Spotify Canvas TOTP secrets fetched: versions=%s",
+                            sorted(parsed.keys(), key=lambda k: int(k)),
+                        )
+                else:
+                    logger.warning(
+                        "Spotify Canvas TOTP secrets non-200 status=%s — usando fallback",
+                        response.status_code,
+                    )
+            except Exception:
+                logger.warning(
+                    "Spotify Canvas TOTP secrets fetch falhou — usando fallback",
+                    exc_info=True,
+                )
+            if not secrets_dict:
+                secrets_dict = TOTP_SECRETS_FALLBACK
+            try:
+                version = max(secrets_dict.keys(), key=lambda k: int(k))
+                ciphertext = secrets_dict[version]
+                derived = self._derive_totp_secret(ciphertext)
+            except (ValueError, TypeError):
+                logger.exception("Spotify Canvas TOTP secret invalid")
+                return None
+            self._totp_version = version
+            self._totp_secret = derived
+            self._totp_expires_at = now + TOTP_SECRETS_TTL_SECONDS
+            return version, derived
+
+    @staticmethod
+    def _derive_totp_secret(ciphertext) -> bytes:
+        """Algoritmo do glomatico/votify: XOR byte-a-byte com ((i%33)+9),
+        concatena os ints decimais como string e encode pra ASCII."""
+        return "".join(
+            str(int(b) ^ ((i % 33) + 9)) for i, b in enumerate(ciphertext)
+        ).encode("ascii")
+
+    @staticmethod
+    def _generate_totp(secret: bytes) -> str:
+        """TOTP HMAC-SHA1 padrão RFC 6238, period=30, digits=6."""
+        counter = int(time.time()) // TOTP_PERIOD
+        counter_bytes = counter.to_bytes(8, "big")
+        h = hmac.new(secret, counter_bytes, hashlib.sha1).digest()
+        offset = h[-1] & 0x0F
+        binary = (
+            (h[offset] & 0x7F) << 24
+            | (h[offset + 1] & 0xFF) << 16
+            | (h[offset + 2] & 0xFF) << 8
+            | (h[offset + 3] & 0xFF)
+        )
+        return str(binary % (10**TOTP_DIGITS)).zfill(TOTP_DIGITS)
 
     def _extract_token(self, response: httpx.Response, source: str) -> str | None:
         if response.status_code == 403 and "URL Blocked" in response.text:
