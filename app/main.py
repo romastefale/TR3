@@ -29,10 +29,11 @@ from app.btb.state import clear_waiting as btb_clear_waiting, get_session as btb
 from app.btb.storage import ensure_tables as btb_ensure_tables
 from app.config.settings import BASE_URL, TELEGRAM_BOT_TOKEN, telegram_webhook_secret, validate_required_env
 from app.db.database import engine, init_db, run_migrations
-from app.moderation_tigrao import customize_router as tigrao_customize_router, ddx_router as tigrao_ddx_router, member_tag_router as tigrao_member_tag_router, pinned_media_router as tigrao_pinned_media_router, router as tigrao_router
+from app.moderation_tigrao import customize_router as tigrao_customize_router, ddx_router as tigrao_ddx_router, ddx_soft_router as tigrao_ddx_soft_router, member_tag_router as tigrao_member_tag_router, pinned_media_router as tigrao_pinned_media_router, router as tigrao_router
 from app.moderation_tigrao.customize_router import tigrao_receive_group_photo
 from app.moderation_tigrao.ddx_router import tigrao_ddx_receive_add_words, tigrao_ddx_receive_remove_words
 from app.moderation_tigrao.ddx_runtime import tigrao_ddx_preprocess_update
+from app.moderation_tigrao.ddx_soft_runtime import tigrao_ddx_soft_preprocess_update
 from app.moderation_tigrao.new_member_watch_router import router as tigrao_new_member_watch_router  # Sprint X4
 from app.moderation_tigrao.inline_router import router as tigrao_inline_x9_router  # Sprint X9
 from app.bot.new_member_watch_runtime import tigrao_new_member_watch_preprocess_update  # Sprint X4
@@ -329,6 +330,7 @@ async def on_startup() -> None:
         )
         if not _telegram_dispatcher_configured:
             dispatcher.include_router(tigrao_ddx_router)
+            dispatcher.include_router(tigrao_ddx_soft_router)
             dispatcher.include_router(tigrao_customize_router)
             dispatcher.include_router(tigrao_member_tag_router)
             dispatcher.include_router(tigrao_pinned_media_router)
@@ -534,6 +536,12 @@ async def telegram_webhook(request: Request):
             ddx_handled = False
         if ddx_handled:
             return {"ok": True}
+        # DDX Soft (lei dos 10 minutos): roda DEPOIS do hard. Nunca consome
+        # o update (sempre retorna False) — apenas agenda delete em 600s.
+        try:
+            await tigrao_ddx_soft_preprocess_update(bot, update)
+        except Exception:
+            logger.exception("TIGRAO_DDX_SOFT_PREPROCESS_FAILED | update_id=%s", update.update_id)
         await dispatcher.feed_update(bot, update)
         return {"ok": True}
     except Exception:

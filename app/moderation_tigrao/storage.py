@@ -53,6 +53,18 @@ def ensure_tables() -> None:
                 """
             )
         )
+        conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS tigrao_ddx_soft_filters (
+                    chat_id INTEGER PRIMARY KEY,
+                    words TEXT,
+                    enabled INTEGER,
+                    updated_at DATETIME
+                );
+                """
+            )
+        )
 
 
 def remember_group(chat_id: int, title: str | None = None) -> None:
@@ -233,6 +245,72 @@ def set_ddx_filters(chat_id: int, words: list[str], enabled: bool = True) -> Non
 
 def load_ddx_words(chat_id: int) -> list[str]:
     row = get_ddx_filters(chat_id)
+    if not row:
+        return []
+    try:
+        words = json.loads(str(row.get("words") or "[]"))
+    except Exception:
+        return []
+    if not isinstance(words, list):
+        return []
+    return [str(word) for word in words]
+
+
+# ---------------------------------------------------------------------------
+# DDX Soft (lei de 10 minutos): mesma estrutura do DDX hard, mas a ação é
+# delete agendado em 600s ao invés de imediato. Tabela SEPARADA pra zero
+# acoplamento com o hard — palavras das duas listas nunca se cruzam por
+# decisão do owner (regra explícita do projeto).
+# ---------------------------------------------------------------------------
+
+
+def get_ddx_soft_filters(chat_id: int) -> dict[str, Any] | None:
+    ensure_tables()
+    with engine.begin() as conn:
+        row = (
+            conn.execute(
+                text(
+                    """
+                    SELECT chat_id, words, enabled, updated_at
+                    FROM tigrao_ddx_soft_filters
+                    WHERE chat_id = :chat_id
+                    """
+                ),
+                {"chat_id": chat_id},
+            )
+            .mappings()
+            .first()
+        )
+    return dict(row) if row else None
+
+
+def set_ddx_soft_filters(chat_id: int, words: list[str], enabled: bool = True) -> None:
+    ensure_tables()
+    clean_words = [str(word).strip() for word in words if str(word).strip()]
+    deduped_words = list(dict.fromkeys(clean_words))
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                """
+                INSERT INTO tigrao_ddx_soft_filters (chat_id, words, enabled, updated_at)
+                VALUES (:chat_id, :words, :enabled, :updated_at)
+                ON CONFLICT(chat_id) DO UPDATE SET
+                    words = excluded.words,
+                    enabled = excluded.enabled,
+                    updated_at = excluded.updated_at
+                """
+            ),
+            {
+                "chat_id": chat_id,
+                "words": json.dumps(deduped_words, ensure_ascii=False),
+                "enabled": 1 if enabled else 0,
+                "updated_at": datetime.now(timezone.utc),
+            },
+        )
+
+
+def load_ddx_soft_words(chat_id: int) -> list[str]:
+    row = get_ddx_soft_filters(chat_id)
     if not row:
         return []
     try:

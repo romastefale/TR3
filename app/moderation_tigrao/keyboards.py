@@ -181,6 +181,19 @@ def ddx_keyboard() -> InlineKeyboardMarkup:
         [_button("Remover filtro", "tigrao:ddx:remove", "primary")],
         [_button("Listar filtros", "tigrao:ddx:list", "primary")],
         [_button("Desligar DDX", "tigrao:ddx:off", "primary")],
+        [_button("Filtros DDX 10min", "tigrao:ddx_soft:menu", "primary")],
+    ]
+    rows.extend(_back_close_rows())
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def ddx_soft_keyboard() -> InlineKeyboardMarkup:
+    rows = [
+        [_button("Adicionar filtro 10min", "tigrao:ddx_soft:add", "primary")],
+        [_button("Remover filtro 10min", "tigrao:ddx_soft:remove", "primary")],
+        [_button("Listar filtros 10min", "tigrao:ddx_soft:list", "primary")],
+        [_button("Desligar DDX 10min", "tigrao:ddx_soft:off", "primary")],
+        [_button("Voltar para DDX", "tigrao:ddx", "primary")],
     ]
     rows.extend(_back_close_rows())
     return InlineKeyboardMarkup(inline_keyboard=rows)
