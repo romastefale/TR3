@@ -55,20 +55,23 @@ logger = logging.getLogger(__name__)
 
 router = Router(name="moderation_tigrao_inline_x9")
 
-# Texto curto e neutro postado no chat onde owner digitou inline.
-# Em SM/Saved Messages fica como log invisível. Em grupo, é apagado/
-# esvaziado assim que a ação executa via edit_message_text no chosen
-# handler (inline_message_id só vem quando o result tem reply_markup —
-# por isso `_NOOP_KB` abaixo).
-_ACK_TEXT = "·"
-# Caractere invisível (WORD JOINER U+2060). Telegram aceita como texto
-# válido em edit_message_text, mas não renderiza glifo — o "·" some
-# visualmente do chat. NÃO há API pra deletar mensagem inline (sem
-# chat_id/message_id), só editar via inline_message_id.
+# Texto postado no chat onde owner digitou inline. Aparece como
+# mensagem do owner via @tigraoRADIObot. Em caso de SUCESSO, é deixado
+# visível — owner apaga manualmente quando quiser. Em caso de FALHA
+# (ação ou envio da música), `_erase_inline_ack` substitui por
+# `_ERASED_TEXT` pra não vazar falso positivo pro grupo.
+#
+# Nota de UI: sem emojis (política do projeto). Frase curta + ponto.
+_ACK_TEXT = "Música enviada."
+# Caractere invisível (WORD JOINER U+2060). Usado pra "apagar"
+# visualmente a mensagem quando algo falha — Telegram NÃO permite
+# deletar mensagem inline (não há chat_id/message_id na ótica do bot),
+# só editar via inline_message_id.
 _ERASED_TEXT = "\u2060"
-# Keyboard dummy obrigatório: sem reply_markup no result, o Telegram
-# NÃO devolve `inline_message_id` no ChosenInlineResult e a mensagem
-# fica impossível de editar/esvaziar.
+# Keyboard dummy obrigatório no card de ação: sem reply_markup no
+# result, o Telegram NÃO devolve `inline_message_id` no
+# ChosenInlineResult e o fallback de erase em caso de falha fica
+# impossível.
 _NOOP_KB = InlineKeyboardMarkup(
     inline_keyboard=[[InlineKeyboardButton(text="\u2060", callback_data="x9:noop")]]
 )
@@ -84,11 +87,17 @@ _LABELS = {a: lbl for a, _, lbl in _ACTIONS}
 
 
 def _stub(card_id: str, title: str, description: str) -> InlineQueryResultArticle:
+    # Stubs são cards de erro (IDs inválidos, bot não-admin, sem permissões,
+    # target=owner). NÃO devem postar "Música enviada." — seria mentira
+    # visível pro grupo até o erase do chosen handler rodar. Postam direto
+    # com texto invisível (_ERASED_TEXT) e ainda assim ganham _NOOP_KB pra
+    # manter `inline_message_id` disponível no chosen handler (que tenta
+    # editar de novo por segurança).
     return InlineQueryResultArticle(
         id=card_id,
         title=title,
         description=description,
-        input_message_content=InputTextMessageContent(message_text=_ACK_TEXT),
+        input_message_content=InputTextMessageContent(message_text=_ERASED_TEXT),
         reply_markup=_NOOP_KB,
     )
 
@@ -189,16 +198,19 @@ async def x9_inline(query: InlineQuery) -> None:
 
 
 async def _erase_inline_ack(bot, inline_message_id: str | None) -> None:
-    """Esvazia visualmente o "·" postado pelo card inline no chat.
+    """Esvazia visualmente a frase "Música enviada." em caso de FALHA.
 
     Telegram NÃO permite deletar mensagem inline (não há chat_id/message_id
     associados na ótica do bot). O caminho disponível é `edit_message_text`
-    com `inline_message_id` — substituímos o texto por U+2060 (word joiner,
-    sem glifo) e removemos o keyboard dummy. Resultado: linha em branco no
-    histórico, sem caracteres visíveis.
+    com `inline_message_id` — substituímos por U+2060 (word joiner, sem
+    glifo) e removemos o keyboard dummy. Resultado: linha em branco no
+    histórico, sem texto visível mentindo que a música foi enviada.
 
-    Silencioso em qualquer falha: se o Telegram rejeitar (mensagem velha,
-    botão já clicado, etc.), apenas loga em debug — não interrompe o fluxo.
+    Em SUCESSO total, NUNCA é chamado — a frase fica visível e o owner
+    apaga manualmente quando quiser.
+
+    Silencioso em qualquer falha de edit: se o Telegram rejeitar (mensagem
+    velha, etc.), só loga em debug — não interrompe o fluxo.
     """
     if not inline_message_id:
         return
@@ -319,18 +331,20 @@ async def x9_chosen(result: ChosenInlineResult) -> None:
             target_user_id,
         )
 
-    # Esvazia o "·" do chat IMEDIATAMENTE após a ação (sucesso ou falha),
-    # antes da música/DM. Mais cedo possível dentro da API — não dá pra
-    # deletar mensagem inline, só editar. Quando a DM chegar pro owner,
-    # o chat já está limpo (sem glifo visível).
-    await _erase_inline_ack(bot, inline_message_id)
-
-    # Esteganografia: SÓ envia card de música se a ação foi bem-sucedida.
-    # Card pós-falha seria falso positivo operacional e vazaria que algo
-    # foi tentado sem ter sido executado.
+    # SÓ envia card de música se a ação foi bem-sucedida. Card pós-falha
+    # seria falso positivo operacional e vazaria que algo foi tentado sem
+    # ter sido executado.
     music_sent = False
     if action_ok:
         music_sent = await _send_music_confirmation(bot, chat_id)
+
+    # Política da frase "Música enviada." no grupo:
+    # - SUCESSO (ação OK + música enviada): mantém visível. Owner apaga
+    #   manualmente quando quiser.
+    # - FALHA (ação falhou OU música não enviou): esvazia pra invisível
+    #   via edit, pra não vazar falso positivo pro grupo.
+    if not (action_ok and music_sent):
+        await _erase_inline_ack(bot, inline_message_id)
 
     # DM pro owner — sem emojis, conforme política de UI.
     try:
