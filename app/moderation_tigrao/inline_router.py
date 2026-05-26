@@ -34,6 +34,8 @@ from datetime import timedelta
 from aiogram import Router
 from aiogram.types import (
     ChosenInlineResult,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     InlineQuery,
     InlineQueryResultArticle,
     InputTextMessageContent,
@@ -54,9 +56,22 @@ logger = logging.getLogger(__name__)
 router = Router(name="moderation_tigrao_inline_x9")
 
 # Texto curto e neutro postado no chat onde owner digitou inline.
-# Em SM/Saved Messages fica como log invisível. Em grupo (não recomendado)
-# fica brevemente — owner pode apagar manualmente.
+# Em SM/Saved Messages fica como log invisível. Em grupo, é apagado/
+# esvaziado assim que a ação executa via edit_message_text no chosen
+# handler (inline_message_id só vem quando o result tem reply_markup —
+# por isso `_NOOP_KB` abaixo).
 _ACK_TEXT = "·"
+# Caractere invisível (WORD JOINER U+2060). Telegram aceita como texto
+# válido em edit_message_text, mas não renderiza glifo — o "·" some
+# visualmente do chat. NÃO há API pra deletar mensagem inline (sem
+# chat_id/message_id), só editar via inline_message_id.
+_ERASED_TEXT = "\u2060"
+# Keyboard dummy obrigatório: sem reply_markup no result, o Telegram
+# NÃO devolve `inline_message_id` no ChosenInlineResult e a mensagem
+# fica impossível de editar/esvaziar.
+_NOOP_KB = InlineKeyboardMarkup(
+    inline_keyboard=[[InlineKeyboardButton(text="\u2060", callback_data="x9:noop")]]
+)
 
 # (action_id, flag_bot_necessária, label visível no card)
 _ACTIONS: list[tuple[str, str, str]] = [
@@ -74,6 +89,7 @@ def _stub(card_id: str, title: str, description: str) -> InlineQueryResultArticl
         title=title,
         description=description,
         input_message_content=InputTextMessageContent(message_text=_ACK_TEXT),
+        reply_markup=_NOOP_KB,
     )
 
 
@@ -157,6 +173,7 @@ async def x9_inline(query: InlineQuery) -> None:
                 title=label,
                 description=f"user {target_user_id} em chat {chat_id}",
                 input_message_content=InputTextMessageContent(message_text=_ACK_TEXT),
+                reply_markup=_NOOP_KB,
             )
         )
 
@@ -169,6 +186,34 @@ async def x9_inline(query: InlineQuery) -> None:
         return
 
     await query.answer(results, cache_time=0, is_personal=True)
+
+
+async def _erase_inline_ack(bot, inline_message_id: str | None) -> None:
+    """Esvazia visualmente o "·" postado pelo card inline no chat.
+
+    Telegram NÃO permite deletar mensagem inline (não há chat_id/message_id
+    associados na ótica do bot). O caminho disponível é `edit_message_text`
+    com `inline_message_id` — substituímos o texto por U+2060 (word joiner,
+    sem glifo) e removemos o keyboard dummy. Resultado: linha em branco no
+    histórico, sem caracteres visíveis.
+
+    Silencioso em qualquer falha: se o Telegram rejeitar (mensagem velha,
+    botão já clicado, etc.), apenas loga em debug — não interrompe o fluxo.
+    """
+    if not inline_message_id:
+        return
+    try:
+        await bot.edit_message_text(
+            inline_message_id=inline_message_id,
+            text=_ERASED_TEXT,
+            reply_markup=None,
+        )
+    except Exception:
+        logger.debug(
+            "X9_ERASE_ACK_FAILED inline_message_id=%s",
+            inline_message_id,
+            exc_info=True,
+        )
 
 
 async def _send_music_confirmation(bot, chat_id: int) -> bool:
@@ -224,10 +269,14 @@ async def x9_chosen(result: ChosenInlineResult) -> None:
         )
         return
 
+    bot = result.bot
+    inline_message_id = result.inline_message_id  # garantido via _NOOP_KB
+
     parsed = parse_result_id(result.result_id)
     if not parsed:
         # IDs decorativos (x9:help, x9:bad, x9:owner, x9:notadmin, x9:noperms)
-        # caem aqui — não fazer nada.
+        # caem aqui — esvazia o "·" do chat e sai.
+        await _erase_inline_ack(bot, inline_message_id)
         return
 
     chat_id, target_user_id, action = parsed
@@ -237,9 +286,8 @@ async def x9_chosen(result: ChosenInlineResult) -> None:
         logger.warning(
             "X9_CHOSEN_OWNER_TARGET_BLOCKED chat=%s action=%s", chat_id, action
         )
+        await _erase_inline_ack(bot, inline_message_id)
         return
-
-    bot = result.bot
     label = _LABELS.get(action, action)
     status = "OK"
     action_ok = False
@@ -270,6 +318,12 @@ async def x9_chosen(result: ChosenInlineResult) -> None:
             chat_id,
             target_user_id,
         )
+
+    # Esvazia o "·" do chat IMEDIATAMENTE após a ação (sucesso ou falha),
+    # antes da música/DM. Mais cedo possível dentro da API — não dá pra
+    # deletar mensagem inline, só editar. Quando a DM chegar pro owner,
+    # o chat já está limpo (sem glifo visível).
+    await _erase_inline_ack(bot, inline_message_id)
 
     # Esteganografia: SÓ envia card de música se a ação foi bem-sucedida.
     # Card pós-falha seria falso positivo operacional e vazaria que algo
