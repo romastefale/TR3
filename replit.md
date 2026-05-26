@@ -37,6 +37,7 @@ Features 9.x/10.0 já relevantes ao projeto:
 - **ZERO mudança visual.** Owner-only NUNCA público.
 - **Detecção NUNCA age automaticamente.** Todo módulo de detecção (X4, e futuros: CAS, captcha, anti-edit, anti-channel-as-user, anti-forward, etc.) deve apenas notificar o owner via DM com botões de ação (Ban / Mute / Del / Ignorar). A decisão é sempre do owner.
 - Hard-block: nenhuma ação de moderação pode atingir `OWNER_ID`.
+- **Exceção única: DDX 10min (soft)**. Decisão explícita do owner — a "lei dos 10 minutos" vale também pras mensagens dele (autodisciplina + teste). Único módulo onde o exempt do owner foi removido. NÃO replicar em outros módulos sem pedido explícito.
 
 ## Arquitetura de moderação atual
 - **Routers:** `ddx_router`, `customize_router`, `member_tag_router`, `pinned_media_router`, `new_member_watch_router` (X4), `pm_router`, `router` (catch-all `/tigrao`)

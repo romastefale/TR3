@@ -6,7 +6,10 @@ Espelho funcional do `ddx_runtime.py`, mas:
 - não deleta imediato; agenda `delete_message` pra +600s via asyncio.Task
 - notifica owner por DM APÓS o delete bem-sucedido (silencioso pro
   grupo — ninguém vê — mas o owner recebe confirmação como no hard)
-- exempt OWNER_ID (política: nenhuma ação de moderação atinge owner)
+- NÃO faz exempt do OWNER_ID (decisão explícita do owner: ele quer
+  que a "lei dos 10 minutos" valha também pras mensagens dele,
+  pra poder testar e pra autodisciplina). Esta é a única exceção
+  ao hard-block geral do projeto.
 - in-memory scheduler: tasks pendentes morrem se o bot reinicia
   (aceito — palavras soft = "ruído tolerável temporário")
 
@@ -361,9 +364,7 @@ async def tigrao_ddx_soft_preprocess_update(bot, update) -> bool:
     if not text_value or not message.from_user:
         return False
 
-    # Hard-block owner: política do projeto.
-    if OWNER_ID and message.from_user.id == OWNER_ID:
-        return False
+    # Owner NÃO é exempt aqui (decisão explícita — ver docstring).
 
     row = get_ddx_soft_filters(int(message.chat.id))
     if not row or not row.get("enabled"):
