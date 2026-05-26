@@ -107,6 +107,51 @@ def _shorten_text(value: str, limit: int = 900) -> str:
     return cleaned[: limit - 1].rstrip() + "…"
 
 
+async def _notify_owner_ddx_soft_scheduled(bot, snap: _Snapshot) -> None:
+    """DM ao owner NO MOMENTO da detecção — avisa que apagamento foi
+    agendado pra +10min. Espelho do deleted, com header "agendou" e
+    horizonte temporal pra você saber quando esperar a 2ª DM."""
+    if not OWNER_ID:
+        return
+    try:
+        author_name = html.escape(snap.user_full_name or "desconhecido")
+        username_line = (
+            f"\nUsername: @{html.escape(snap.user_username)}"
+            if snap.user_username
+            else ""
+        )
+        group_title = html.escape(snap.chat_title or str(snap.chat_id))
+        matched_text = (
+            ", ".join(html.escape(word) for word in snap.matched_words)
+            if snap.matched_words
+            else "filtro DDX 10min"
+        )
+        message_text = html.escape(_shorten_text(snap.text_value))
+        notice = (
+            "Tigrão — DDX 10min agendou apagamento\n\n"
+            f"Grupo: {group_title} ({snap.chat_id})\n"
+            f"Autor: {author_name} — <code>{snap.user_id}</code>{username_line}\n"
+            f"Mensagem ID: <code>{snap.message_id}</code>\n"
+            f"Filtro: {matched_text}\n"
+            f"Apaga em: 10 minutos\n\n"
+            f"Mensagem detectada:\n<blockquote>{message_text}</blockquote>"
+        )
+        await bot.send_message(chat_id=OWNER_ID, text=notice, parse_mode="HTML")
+        logger.warning(
+            "TIGRAO_DDX_SOFT_OWNER_SCHEDULED_NOTIFIED | chat_id=%s | user_id=%s | message_id=%s",
+            snap.chat_id,
+            snap.user_id,
+            snap.message_id,
+        )
+    except Exception:
+        logger.exception(
+            "TIGRAO_DDX_SOFT_OWNER_SCHEDULED_NOTIFY_FAILED | chat_id=%s | user_id=%s | message_id=%s",
+            snap.chat_id,
+            snap.user_id,
+            snap.message_id,
+        )
+
+
 async def _notify_owner_ddx_soft_deleted(bot, snap: _Snapshot) -> None:
     """DM ao owner APÓS delete bem-sucedido. Espelho do
     _notify_owner_ddx_deleted do hard, com header indicando "10min"
@@ -315,6 +360,10 @@ async def tigrao_ddx_soft_preprocess_update(bot, update) -> bool:
             snap.message_id,
             DDX_SOFT_DELAY_SECONDS,
         )
+        # DM "agendou" em background — não bloqueia o preprocess
+        # (que precisa retornar rápido pro próximo update). Falha
+        # na DM não cancela o agendamento do delete.
+        asyncio.create_task(_notify_owner_ddx_soft_scheduled(bot, snap))
         asyncio.create_task(_delete_after_delay(bot, snap, DDX_SOFT_DELAY_SECONDS))
     except Exception:
         _scheduled.discard(key)
