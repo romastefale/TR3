@@ -6,7 +6,7 @@ import logging
 
 from aiogram import Dispatcher, F
 from aiogram.filters import Command
-from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.types import BufferedInputFile, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from sqlalchemy import text
 
 from app.bot.filters import IsOwner
@@ -15,6 +15,7 @@ from app.moderation_tigrao.storage import list_groups
 from app.services.likes import likes_service
 from app.services.music import music_service
 from app.services.reactions import reactions_service  # Sprint 8
+from app.services.spotify_canvas import fetch_canvas_video_bytes
 
 logger = logging.getLogger(__name__)
 
@@ -158,12 +159,39 @@ async def _send_kingplay(message: Message, target_chat_id: int, owner_user_id: i
     track_url = html.escape(str(track.get("spotify_url") or ""), quote=True)
     caption = f'<b><i>♫ {group_name} está ouvindo </i></b><a href="{track_url}"><b>{track_name}</b></a><b><i> — {artist_name}</i></b>'
 
+    # Tenta Canvas (vídeo vertical do Spotify) ANTES da capa estática.
+    # Mesma lógica de /tcanvas: helper resolve lfm:->Spotify ID e baixa
+    # bytes. Em qualquer falha (sem canvas, sem match, download falhou),
+    # canvas_bytes = None -> cai no fluxo de capa/texto original.
+    raw_track_id = str(track.get("track_id") or "").strip()
+    raw_artist = _normalize_optional_text(track.get("artist"))
+    raw_track_name = _normalize_optional_text(track.get("track_name"))
+    canvas_bytes: bytes | None = None
     try:
-        cover = track.get("album_image_url")
-        if cover:
-            sent = await message.bot.send_photo(chat_id=target_chat_id, photo=str(cover), caption=caption, parse_mode="HTML")
+        canvas_bytes = await fetch_canvas_video_bytes(
+            raw_track_id, raw_artist, raw_track_name
+        )
+    except Exception:
+        logger.exception(
+            "KINGPLAY_CANVAS_ERROR | owner=%s | track_id=%s",
+            owner_user_id, raw_track_id,
+        )
+
+    try:
+        if canvas_bytes:
+            filename_id = raw_track_id or "track"
+            sent = await message.bot.send_video(
+                chat_id=target_chat_id,
+                video=BufferedInputFile(canvas_bytes, filename=f"canvas-{filename_id}.mp4"),
+                caption=caption,
+                parse_mode="HTML",
+            )
         else:
-            sent = await message.bot.send_message(chat_id=target_chat_id, text=caption, parse_mode="HTML")
+            cover = track.get("album_image_url")
+            if cover:
+                sent = await message.bot.send_photo(chat_id=target_chat_id, photo=str(cover), caption=caption, parse_mode="HTML")
+            else:
+                sent = await message.bot.send_message(chat_id=target_chat_id, text=caption, parse_mode="HTML")
     except Exception as exc:
         logger.exception("Falha de envio no /kingplay", exc_info=exc)
         await message.answer("Erro ao enviar mensagem no grupo.")

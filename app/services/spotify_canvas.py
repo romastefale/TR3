@@ -607,3 +607,56 @@ class SpotifyCanvasService:
 
 
 spotify_canvas_service = SpotifyCanvasService()
+
+async def fetch_canvas_video_bytes(
+    track_id: str,
+    artist: str | None = None,
+    track_name: str | None = None,
+) -> bytes | None:
+    """Resolve track_id Last.fm -> Spotify ID se preciso, busca Canvas URL,
+    baixa bytes. Centraliza o fluxo usado por /tcanvas e /kingplay.
+
+    Retorna `bytes` do mp4 se tudo deu certo, ou `None` em qualquer falha
+    (sem Canvas, download falhou, resolução Last.fm->Spotify falhou).
+    Loga cada etapa pra debugging em produção.
+    """
+    canvas_track_id = (track_id or "").strip()
+    if not canvas_track_id:
+        return None
+    if canvas_track_id.startswith("lfm:"):
+        artist_clean = (artist or "").strip()
+        track_clean = (track_name or "").strip()
+        if not artist_clean or not track_clean:
+            logger.info(
+                "Canvas helper: lfm sem artist/track, skip | track_id=%s",
+                canvas_track_id,
+            )
+            return None
+        # Import local pra evitar ciclo (spotify importa coisas do db).
+        from app.services.spotify import spotify_service
+        try:
+            match = await spotify_service.search_track(artist_clean, track_clean)
+        except Exception:
+            logger.exception(
+                "Canvas helper: search_track error | artist=%s | track=%s",
+                artist_clean, track_clean,
+            )
+            return None
+        if not match or not match.get("id"):
+            logger.info(
+                "Canvas helper: search miss | artist=%s | track=%s",
+                artist_clean, track_clean,
+            )
+            return None
+        resolved = match["id"]
+        logger.info(
+            "Canvas helper resolved | lfm=%s -> spotify=%s | artist=%s | track=%s",
+            canvas_track_id, resolved, artist_clean, track_clean,
+        )
+        canvas_track_id = resolved
+
+    canvas_url = await spotify_canvas_service.get_canvas_url(canvas_track_id)
+    if not canvas_url:
+        return None
+    return await spotify_canvas_service.download_canvas_bytes(canvas_url)
+
