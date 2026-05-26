@@ -27,6 +27,7 @@ import unicodedata
 from dataclasses import dataclass
 
 from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 
 from app.config.settings import OWNER_ID
 from app.moderation_tigrao.storage import get_ddx_soft_filters, log_action
@@ -35,8 +36,40 @@ logger = logging.getLogger(__name__)
 
 DDX_SOFT_DELAY_SECONDS = 10 * 60
 
-_scheduled: set[tuple[int, int]] = set()
+# Mapa de delete-tasks pendentes. Chave (chat_id, message_id) → Task.
+# Era set; virou dict pra suportar cancelamento via botão na DM.
+# Valor pode ser None brevemente entre claim do slot e atribuição da
+# task (janela síncrona; cancelamento nesse instante é no-op aceitável).
+_scheduled: dict[tuple[int, int], "asyncio.Task[None] | None"] = {}
 _SCHEDULED_BOUND = 1000
+
+
+def _cancel_keyboard(chat_id: int, message_id: int) -> InlineKeyboardMarkup:
+    """Botão único 'Cancelar' anexado à DM 'agendou apagamento'.
+    Sessão única — após o click, o handler remove o teclado."""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Cancelar",
+                    callback_data=f"tigrao:ddx_soft:cancel:{chat_id}:{message_id}",
+                )
+            ]
+        ]
+    )
+
+
+def cancel_scheduled_delete(chat_id: int, message_id: int) -> bool:
+    """Cancela a task de delete agendada. Retorna True se cancelou,
+    False se a task já tinha terminado (apagou, falhou ou foi cancelada
+    antes) ou nem existe.
+
+    Chamada pelo router quando o owner clica 'Cancelar' na DM."""
+    key = (chat_id, message_id)
+    task = _scheduled.get(key)
+    if task is None or task.done():
+        return False
+    return task.cancel()
 
 
 @dataclass(frozen=True)
@@ -112,8 +145,8 @@ def _shorten_text(value: str, limit: int = 900) -> str:
 
 async def _notify_owner_ddx_soft_scheduled(bot, snap: _Snapshot) -> None:
     """DM ao owner NO MOMENTO da detecção — avisa que apagamento foi
-    agendado pra +10min. Espelho do deleted, com header "agendou" e
-    horizonte temporal pra você saber quando esperar a 2ª DM."""
+    agendado pra +10min. Espelho do deleted, com header "agendou",
+    horizonte temporal e botão 'Cancelar' (sessão única)."""
     if not OWNER_ID:
         return
     try:
@@ -139,7 +172,12 @@ async def _notify_owner_ddx_soft_scheduled(bot, snap: _Snapshot) -> None:
             f"Apaga em: 10 minutos\n\n"
             f"Mensagem detectada:\n<blockquote>{message_text}</blockquote>"
         )
-        await bot.send_message(chat_id=OWNER_ID, text=notice, parse_mode="HTML")
+        await bot.send_message(
+            chat_id=OWNER_ID,
+            text=notice,
+            parse_mode="HTML",
+            reply_markup=_cancel_keyboard(snap.chat_id, snap.message_id),
+        )
         logger.warning(
             "TIGRAO_DDX_SOFT_OWNER_SCHEDULED_NOTIFIED | chat_id=%s | user_id=%s | message_id=%s",
             snap.chat_id,
@@ -254,7 +292,19 @@ async def _delete_after_delay(bot, snap: _Snapshot, delay: float) -> None:
     try:
         await asyncio.sleep(delay)
     except asyncio.CancelledError:
-        _scheduled.discard((snap.chat_id, snap.message_id))
+        _scheduled.pop((snap.chat_id, snap.message_id), None)
+        log_action(
+            chat_id=snap.chat_id,
+            action="ddx_soft_cancelled",
+            target_user_id=snap.user_id,
+            status="success",
+        )
+        logger.warning(
+            "TIGRAO_DDX_SOFT_CANCELLED | chat_id=%s | user_id=%s | message_id=%s",
+            snap.chat_id,
+            snap.user_id,
+            snap.message_id,
+        )
         raise
     try:
         await bot.delete_message(chat_id=snap.chat_id, message_id=snap.message_id)
@@ -350,7 +400,7 @@ async def _delete_after_delay(bot, snap: _Snapshot, delay: float) -> None:
             bot, snap, type(exc).__name__, str(exc)
         )
     finally:
-        _scheduled.discard((snap.chat_id, snap.message_id))
+        _scheduled.pop((snap.chat_id, snap.message_id), None)
 
 
 async def tigrao_ddx_soft_preprocess_update(bot, update) -> bool:
@@ -407,7 +457,9 @@ async def tigrao_ddx_soft_preprocess_update(bot, update) -> bool:
         matched_words=_matching_words(text_value, words),
     )
 
-    _scheduled.add(key)
+    # Reserva slot com None pra impedir re-schedule da mesma msg
+    # enquanto registramos a task abaixo (janela síncrona — sem await).
+    _scheduled[key] = None
     try:
         log_action(
             chat_id=snap.chat_id,
@@ -426,9 +478,13 @@ async def tigrao_ddx_soft_preprocess_update(bot, update) -> bool:
         # (que precisa retornar rápido pro próximo update). Falha
         # na DM não cancela o agendamento do delete.
         asyncio.create_task(_notify_owner_ddx_soft_scheduled(bot, snap))
-        asyncio.create_task(_delete_after_delay(bot, snap, DDX_SOFT_DELAY_SECONDS))
+        delete_task = asyncio.create_task(
+            _delete_after_delay(bot, snap, DDX_SOFT_DELAY_SECONDS)
+        )
+        # Registra a task pra que cancel_scheduled_delete possa achá-la.
+        _scheduled[key] = delete_task
     except Exception:
-        _scheduled.discard(key)
+        _scheduled.pop(key, None)
         logger.exception(
             "TIGRAO_DDX_SOFT_SCHEDULE_FAILED | chat_id=%s | message_id=%s",
             snap.chat_id,

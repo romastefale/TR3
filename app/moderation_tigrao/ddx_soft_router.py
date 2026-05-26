@@ -11,6 +11,7 @@ import re
 from aiogram import F, Router
 from aiogram.types import CallbackQuery, Message
 
+from app.moderation_tigrao.ddx_soft_runtime import cancel_scheduled_delete
 from app.moderation_tigrao.keyboards import ddx_soft_keyboard, home_keyboard
 from app.moderation_tigrao.permissions import is_owner_callback, is_owner_private_message
 from app.moderation_tigrao.state import clear_action, consume_if_expired, get_session, set_action
@@ -273,6 +274,57 @@ async def tigrao_ddx_soft_off(callback: CallbackQuery) -> None:
             reply_markup=ddx_soft_keyboard(),
         )
     await callback.answer()
+
+
+@router.callback_query(F.data.startswith("tigrao:ddx_soft:cancel:"))
+async def tigrao_ddx_soft_cancel(callback: CallbackQuery) -> None:
+    """Handler do botão 'Cancelar' anexado à DM 'agendou apagamento'.
+    Owner-only. Cancela a delete-task se ainda estiver pendente.
+    Sessão única: remove o teclado após o click pra impedir reuso."""
+    if not is_owner_callback(callback):
+        await callback.answer("Acesso negado.", show_alert=True)
+        return
+
+    parts = (callback.data or "").split(":")
+    # Esperado: tigrao:ddx_soft:cancel:<chat_id>:<message_id>
+    if len(parts) != 5:
+        await callback.answer("Dados inválidos.", show_alert=True)
+        return
+    try:
+        chat_id = int(parts[3])
+        message_id = int(parts[4])
+    except ValueError:
+        await callback.answer("Dados inválidos.", show_alert=True)
+        return
+
+    cancelled = cancel_scheduled_delete(chat_id, message_id)
+
+    log_action(
+        chat_id=chat_id,
+        action="ddx_soft_cancel",
+        target_user_id=callback.from_user.id if callback.from_user else None,
+        status="success" if cancelled else "noop",
+    )
+
+    # Sessão única: remove o teclado sempre (mesmo no noop) pra evitar
+    # cliques repetidos numa DM cuja ação já não vai surtir efeito.
+    if callback.message:
+        try:
+            await callback.message.edit_reply_markup(reply_markup=None)
+        except Exception:
+            # Telegram pode rejeitar edit em msg muito antiga; tudo
+            # bem, o callback.answer abaixo ainda dá feedback.
+            pass
+
+    if cancelled:
+        await callback.answer(
+            "Cancelado. A mensagem não será apagada.", show_alert=True
+        )
+    else:
+        await callback.answer(
+            "Já não estava agendado (apagou, falhou ou já foi cancelado).",
+            show_alert=True,
+        )
 
 
 @router.callback_query(F.data == "tigrao:ddx_soft:list")
