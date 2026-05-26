@@ -197,6 +197,56 @@ async def _notify_owner_ddx_soft_deleted(bot, snap: _Snapshot) -> None:
         )
 
 
+async def _notify_owner_ddx_soft_failed(
+    bot, snap: _Snapshot, error_type: str, error_message: str
+) -> None:
+    """DM ao owner quando o delete falha (forbidden, bad_request
+    não-noop, exception). NÃO dispara em `noop` (msg já tinha sumido
+    por outro motivo — silencioso é desejado)."""
+    if not OWNER_ID:
+        return
+    try:
+        author_name = html.escape(snap.user_full_name or "desconhecido")
+        username_line = (
+            f"\nUsername: @{html.escape(snap.user_username)}"
+            if snap.user_username
+            else ""
+        )
+        group_title = html.escape(snap.chat_title or str(snap.chat_id))
+        matched_text = (
+            ", ".join(html.escape(word) for word in snap.matched_words)
+            if snap.matched_words
+            else "filtro DDX 10min"
+        )
+        message_text = html.escape(_shorten_text(snap.text_value))
+        error_text = html.escape(_shorten_text(error_message, limit=300))
+        notice = (
+            "Tigrão — DDX 10min FALHOU ao apagar\n\n"
+            f"Grupo: {group_title} ({snap.chat_id})\n"
+            f"Autor: {author_name} — <code>{snap.user_id}</code>{username_line}\n"
+            f"Mensagem ID: <code>{snap.message_id}</code>\n"
+            f"Filtro: {matched_text}\n"
+            f"Erro: <code>{html.escape(error_type)}</code>\n"
+            f"Motivo: {error_text}\n\n"
+            f"Mensagem que ficou no grupo:\n<blockquote>{message_text}</blockquote>"
+        )
+        await bot.send_message(chat_id=OWNER_ID, text=notice, parse_mode="HTML")
+        logger.warning(
+            "TIGRAO_DDX_SOFT_OWNER_FAILED_NOTIFIED | chat_id=%s | user_id=%s | message_id=%s | error_type=%s",
+            snap.chat_id,
+            snap.user_id,
+            snap.message_id,
+            error_type,
+        )
+    except Exception:
+        logger.exception(
+            "TIGRAO_DDX_SOFT_OWNER_FAILED_NOTIFY_FAILED | chat_id=%s | user_id=%s | message_id=%s",
+            snap.chat_id,
+            snap.user_id,
+            snap.message_id,
+        )
+
+
 async def _delete_after_delay(bot, snap: _Snapshot, delay: float) -> None:
     try:
         await asyncio.sleep(delay)
@@ -217,9 +267,10 @@ async def _delete_after_delay(bot, snap: _Snapshot, delay: float) -> None:
             snap.user_id,
             snap.message_id,
         )
-        # DM ao owner SÓ no sucesso — noop (msg já foi) e erro não
-        # notificam pra evitar ruído. Owner pode auditar via "Logs"
-        # no painel se quiser ver tentativas falhas.
+        # DM ao owner em sucesso. noop (msg já foi por outro motivo)
+        # permanece silencioso por design. Caminhos de erro têm DM
+        # separada disparada nos respectivos except (forbidden,
+        # bad_request não-noop, exception).
         await _notify_owner_ddx_soft_deleted(bot, snap)
     except TelegramBadRequest as exc:
         # Só tratar como noop quando a msg realmente sumiu (apagada por
@@ -255,6 +306,10 @@ async def _delete_after_delay(bot, snap: _Snapshot, delay: float) -> None:
                 snap.message_id,
                 exc,
             )
+            # noop NÃO notifica (silencioso desejado); só error real.
+            await _notify_owner_ddx_soft_failed(
+                bot, snap, type(exc).__name__, str(exc)
+            )
     except TelegramForbiddenError as exc:
         log_action(
             chat_id=snap.chat_id,
@@ -270,6 +325,9 @@ async def _delete_after_delay(bot, snap: _Snapshot, delay: float) -> None:
             snap.user_id,
             snap.message_id,
         )
+        await _notify_owner_ddx_soft_failed(
+            bot, snap, type(exc).__name__, str(exc)
+        )
     except Exception as exc:
         log_action(
             chat_id=snap.chat_id,
@@ -284,6 +342,9 @@ async def _delete_after_delay(bot, snap: _Snapshot, delay: float) -> None:
             snap.chat_id,
             snap.user_id,
             snap.message_id,
+        )
+        await _notify_owner_ddx_soft_failed(
+            bot, snap, type(exc).__name__, str(exc)
         )
     finally:
         _scheduled.discard((snap.chat_id, snap.message_id))
