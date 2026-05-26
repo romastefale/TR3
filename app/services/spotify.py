@@ -422,7 +422,7 @@ class SpotifyService:
                     # images[0] = maior resolução (640px) por convenção da API.
                     cover = images[0].get("url") if images else None
                     if url:
-                        record = {"url": url, "cover": cover}
+                        record = {"id": item.get("id"), "url": url, "cover": cover}
             else:
                 logger.warning(
                     "Spotify search non-200 | status=%s | artist=%s | title=%s",

@@ -21,6 +21,7 @@ from app.bot.telegram import build_playing_payload, _react_to_own_card
 from app.services.connection_check import connect_hint_for, is_user_connected
 from app.services.music import music_service
 from app.services.reactions import reactions_service
+from app.services.spotify import spotify_service
 from app.services.spotify_canvas import spotify_canvas_service
 
 logger = logging.getLogger(__name__)
@@ -69,7 +70,37 @@ async def tcanvas(message: Message) -> None:
         return
     track_id, caption, cover, keyboard, card_emoji = payload
 
-    canvas_url = await spotify_canvas_service.get_canvas_url(track_id)
+    # Canvas precisa de Spotify track_id base62. Quando o music_service
+    # devolve Last.fm-first, track_id chega como "lfm:<sha1>" — hash interno
+    # que nunca resolve no canvaz-cache. Resolve via Spotify Search API
+    # (Client Credentials, sem OAuth do user). Cache em search_track evita
+    # round-trip repetido. Mantém o track_id original pra _register_card
+    # (likes DB usa "lfm:" como chave histórica — não mexer).
+    canvas_track_id = track_id
+    if track_id.startswith("lfm:"):
+        artist = str(track.get("artist") or "").strip()
+        track_name = str(track.get("track_name") or "").strip()
+        if artist and track_name:
+            try:
+                match = await spotify_service.search_track(artist, track_name)
+                if match and match.get("id"):
+                    canvas_track_id = match["id"]
+                    logger.info(
+                        "TCANVAS_RESOLVED lfm=%s -> spotify=%s artist=%s track=%s",
+                        track_id, canvas_track_id, artist, track_name,
+                    )
+                else:
+                    logger.info(
+                        "TCANVAS_RESOLVE_MISS lfm=%s artist=%s track=%s",
+                        track_id, artist, track_name,
+                    )
+            except Exception:
+                logger.exception(
+                    "TCANVAS_RESOLVE_ERROR lfm=%s artist=%s track=%s",
+                    track_id, artist, track_name,
+                )
+
+    canvas_url = await spotify_canvas_service.get_canvas_url(canvas_track_id)
     if not canvas_url:
         logger.info("TCANVAS_NO_CANVAS track_id=%s", track_id)
         sent = await _send_fallback(message, caption, cover, keyboard)

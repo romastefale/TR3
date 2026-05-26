@@ -221,6 +221,17 @@ class SpotifyCanvasService:
         if not clean_track_id:
             logger.info("Spotify Canvas skipped: empty track_id")
             return None
+        # Defesa: track_id "lfm:<hash>" é hash interno Last.fm, NUNCA
+        # resolve no canvaz-cache nem no proxy. O chamador (tcanvas.py)
+        # deveria ter resolvido pra Spotify ID base62 antes — se chegou
+        # aqui é porque a resolução falhou. Skip rápido pra não poluir
+        # log com 403 do proxy.
+        if clean_track_id.startswith("lfm:"):
+            logger.info(
+                "Spotify Canvas skipped: track_id not spotify (got=%s)",
+                clean_track_id,
+            )
+            return None
 
         # Fast path: cache hit sem lock.
         now = time.time()
