@@ -6,6 +6,7 @@ import hmac
 import logging
 import re
 import time
+import weakref
 
 import httpx
 
@@ -206,7 +207,24 @@ class SpotifyCanvasService:
         # Cache de URL por track_id; armazena `None` como cache negativo pra
         # não martelar o canvaz-cache em músicas que sabidamente não têm Canvas.
         self._url_cache: dict[str, tuple[str | None, float]] = {}
-        self._url_lock = asyncio.Lock()
+        # Locks POR TRACK (não global): permite que lookups de tracks diferentes
+        # rodem em paralelo. Mesma track ainda coalesce (2 users pedindo a
+        # mesma faixa = 1 fetch, o 2º espera o 1º terminar e pega do cache).
+        # WeakValueDictionary: o lock vive enquanto algum coroutine o segura
+        # (o caller faz `async with` mantendo referência forte na sua frame);
+        # quando ninguém mais usa, o GC remove a entrada. Sem cleanup manual,
+        # sem bound — coalescência fica preservada SEMPRE (nunca cria 2 locks
+        # diferentes pra mesma track simultânea).
+        self._url_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = (
+            weakref.WeakValueDictionary()
+        )
+        # Semáforo global de concorrência (B): no máximo N lookups Canvas
+        # fazendo trabalho HTTP simultâneo. Protege o proxy canvasdownloader
+        # (Cloudflare na frente) e o endpoint canvaz-cache do Spotify de
+        # picos. N=3 é o sweet spot: paralelismo OK pra grupo pequeno, mas
+        # o 4º pedido em diante espera ~2-4s (latência do anterior) — exatamente
+        # o "demorar um pouquinho" desejado. Cache hits NÃO consomem o semáforo.
+        self._canvas_concurrency = asyncio.Semaphore(3)
         # Cache do secretDict.json (versão + ciphertext). Atualiza a cada 24h.
         self._totp_version: str | None = None
         self._totp_secret: bytes | None = None
@@ -239,82 +257,104 @@ class SpotifyCanvasService:
         if cached is not None and now < cached[1]:
             return cached[0]
 
-        # Slow path: re-check sob lock pra não duplicar fetch.
-        async with self._url_lock:
+        # Slow path: re-check sob lock POR TRACK pra coalescer fetches
+        # duplicados da mesma faixa, sem bloquear tracks diferentes.
+        async with self._get_url_lock(clean_track_id):
             now = time.time()
             cached = self._url_cache.get(clean_track_id)
             if cached is not None and now < cached[1]:
                 return cached[0]
-            try:
-                canvas_url: str | None = None
-                # Marca se a resposta negativa veio de uma fonte confiável
-                # (Spotify oficial via token válido) — aí cacheia por 24h.
-                # Senão, cacheia só 1h pra dar chance de tentar de novo logo.
-                negative_is_authoritative = False
+            # Semáforo global limita N HTTP-bound canvas lookups simultâneos.
+            # Adquirido AQUI (depois do cache re-check) pra não bloquear
+            # cache hits ou requests coalescidos pela mesma track.
+            async with self._canvas_concurrency:
+                try:
+                    canvas_url: str | None = None
+                    # Marca se a resposta negativa veio de uma fonte confiável
+                    # (Spotify oficial via token válido) — aí cacheia por 24h.
+                    # Senão, cacheia só 1h pra dar chance de tentar de novo logo.
+                    negative_is_authoritative = False
 
-                # CAMADA 1 (PRIMÁRIA quando cookie disponível): Spotify direto
-                # via sp_dc. Hit rate ~99% pra tracks que têm canvas. Se o cookie
-                # não está setado, pula direto pra camada 2 (sem round-trip
-                # inútil — token anônimo retorna vazio garantido).
-                if (
-                    SPOTIFY_CANVAS_SP_DC
-                    and time.time() >= self._token_blocked_until
-                ):
-                    token = await self._get_access_token()
-                    if token:
-                        canvas_url = await self._fetch_canvas_url(clean_track_id, token)
+                    # CAMADA 1 (PRIMÁRIA quando cookie disponível): Spotify direto
+                    # via sp_dc. Hit rate ~99% pra tracks que têm canvas. Se o cookie
+                    # não está setado, pula direto pra camada 2 (sem round-trip
+                    # inútil — token anônimo retorna vazio garantido).
+                    if (
+                        SPOTIFY_CANVAS_SP_DC
+                        and time.time() >= self._token_blocked_until
+                    ):
+                        token = await self._get_access_token()
+                        if token:
+                            canvas_url = await self._fetch_canvas_url(clean_track_id, token)
+                            if canvas_url:
+                                logger.info(
+                                    "Spotify Canvas via TOKEN_DIRECT: track_id=%s",
+                                    clean_track_id,
+                                )
+                            else:
+                                # Cookie + token válido + canvas vazio = Spotify
+                                # oficial confirmou que essa track não tem canvas.
+                                # Negativo autoritativo (cache 24h) — mas ainda
+                                # tentamos o proxy abaixo por garantia (custa pouco
+                                # e ocasionalmente acha algo que o oficial perdeu).
+                                negative_is_authoritative = True
+
+                    # CAMADA 2 (FALLBACK): canvasdownloader.com.
+                    # Roda quando o cookie não está setado OU quando o cookie
+                    # está mas o canvaz-cache devolveu vazio. ~50% hit rate,
+                    # zero credencial. Misses ficam com cache curto (1h) pra
+                    # retry; hits viram cache de 24h.
+                    if canvas_url is None:
+                        canvas_url, _proxy_definitive = await self._fetch_via_canvasdownloader(
+                            clean_track_id
+                        )
                         if canvas_url:
                             logger.info(
-                                "Spotify Canvas via TOKEN_DIRECT: track_id=%s",
-                                clean_track_id,
+                                "Spotify Canvas via PROXY: track_id=%s", clean_track_id
                             )
-                        else:
-                            # Cookie + token válido + canvas vazio = Spotify
-                            # oficial confirmou que essa track não tem canvas.
-                            # Negativo autoritativo (cache 24h) — mas ainda
-                            # tentamos o proxy abaixo por garantia (custa pouco
-                            # e ocasionalmente acha algo que o oficial perdeu).
-                            negative_is_authoritative = True
+                            # Proxy achou algo que o oficial não tinha — invalida o
+                            # marker de negativo autoritativo (não cacheia o "não"
+                            # do Spotify oficial junto com um "sim" do proxy).
+                            negative_is_authoritative = False
 
-                # CAMADA 2 (FALLBACK): canvasdownloader.com.
-                # Roda quando o cookie não está setado OU quando o cookie
-                # está mas o canvaz-cache devolveu vazio. ~50% hit rate,
-                # zero credencial. Misses ficam com cache curto (1h) pra
-                # retry; hits viram cache de 24h.
-                if canvas_url is None:
-                    canvas_url, _proxy_definitive = await self._fetch_via_canvasdownloader(
-                        clean_track_id
+                    # Decide TTL do cache:
+                    # - Positivo: 24h (Canvas URLs são estáveis)
+                    # - Negativo confiável (Spotify direto disse não): 24h
+                    # - Negativo não-confiável (só o proxy/falha): 1h pra retry
+                    ttl = (
+                        CANVAS_URL_CACHE_TTL_SECONDS
+                        if canvas_url or negative_is_authoritative
+                        else CANVAS_URL_NEGATIVE_TTL_SECONDS
                     )
-                    if canvas_url:
+                    if not canvas_url:
                         logger.info(
-                            "Spotify Canvas via PROXY: track_id=%s", clean_track_id
+                            "Spotify Canvas NOT FOUND: track_id=%s (cache_ttl=%ss authoritative=%s)",
+                            clean_track_id,
+                            ttl,
+                            negative_is_authoritative,
                         )
-                        # Proxy achou algo que o oficial não tinha — invalida o
-                        # marker de negativo autoritativo (não cacheia o "não"
-                        # do Spotify oficial junto com um "sim" do proxy).
-                        negative_is_authoritative = False
+                    self._url_cache[clean_track_id] = (canvas_url, time.time() + ttl)
+                    return canvas_url
+                except Exception:
+                    logger.exception("Spotify Canvas lookup failed: track_id=%s", clean_track_id)
+                    return None
 
-                # Decide TTL do cache:
-                # - Positivo: 24h (Canvas URLs são estáveis)
-                # - Negativo confiável (Spotify direto disse não): 24h
-                # - Negativo não-confiável (só o proxy/falha): 1h pra retry
-                ttl = (
-                    CANVAS_URL_CACHE_TTL_SECONDS
-                    if canvas_url or negative_is_authoritative
-                    else CANVAS_URL_NEGATIVE_TTL_SECONDS
-                )
-                if not canvas_url:
-                    logger.info(
-                        "Spotify Canvas NOT FOUND: track_id=%s (cache_ttl=%ss authoritative=%s)",
-                        clean_track_id,
-                        ttl,
-                        negative_is_authoritative,
-                    )
-                self._url_cache[clean_track_id] = (canvas_url, time.time() + ttl)
-                return canvas_url
-            except Exception:
-                logger.exception("Spotify Canvas lookup failed: track_id=%s", clean_track_id)
-                return None
+    def _get_url_lock(self, track_id: str) -> asyncio.Lock:
+        """Retorna lock dedicado pra essa track. Cria lazy.
+
+        WeakValueDictionary: enquanto algum caller segura o lock via
+        `async with`, ele permanece vivo (referência forte na frame). Quando
+        ninguém mais usa, o GC remove a entrada automaticamente. Garante:
+        - Coalescência estrita: 2 requests simultâneas da MESMA track sempre
+          pegam o MESMO objeto lock (a 2ª aumenta refcount e mantém vivo).
+        - Sem leak: tracks idle são coletadas naturalmente.
+        - Sem bound artificial.
+        """
+        lock = self._url_locks.get(track_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._url_locks[track_id] = lock
+        return lock
 
     async def _fetch_via_canvasdownloader(
         self, track_id: str

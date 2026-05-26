@@ -12,6 +12,7 @@ github.com/bartleyg/my-spotify-canvas.
 from __future__ import annotations
 
 import logging
+import time
 
 from aiogram import Router
 from aiogram.filters import Command
@@ -26,6 +27,31 @@ from app.services.spotify_canvas import spotify_canvas_service
 
 logger = logging.getLogger(__name__)
 router = Router()
+
+# Cooldown C: bloqueia o MESMO user de disparar /tcanvas em sequência
+# rápida. Evita spam acidental (toque duplo) e ataque trivial de DoS de
+# 1 user só. Janela curta — 5s é suficiente pra não atrapalhar uso legítimo
+# (lookup completo demora ~2-4s) mas frear loops. Dict simples user_id ->
+# timestamp do último uso. Bound de memória: se >5000 users, descarta
+# o dict inteiro (vai recriar conforme uso).
+_TCANVAS_COOLDOWN_SECONDS = 5.0
+_TCANVAS_USER_BOUND = 5000
+_tcanvas_last_use: dict[int, float] = {}
+
+
+def _check_cooldown(user_id: int) -> float | None:
+    """Retorna segundos restantes se o user está em cooldown, senão None.
+    Quando libera, registra o timestamp atual.
+    """
+    now = time.monotonic()
+    last = _tcanvas_last_use.get(user_id, 0.0)
+    elapsed = now - last
+    if elapsed < _TCANVAS_COOLDOWN_SECONDS:
+        return _TCANVAS_COOLDOWN_SECONDS - elapsed
+    if len(_tcanvas_last_use) >= _TCANVAS_USER_BOUND:
+        _tcanvas_last_use.clear()
+    _tcanvas_last_use[user_id] = now
+    return None
 
 
 async def _send_fallback(message: Message, caption: str, cover: str | None, keyboard) -> Message:
@@ -54,6 +80,15 @@ async def tcanvas(message: Message) -> None:
     if not is_user_connected(message.from_user.id):
         await message.answer(
             connect_hint_for(message.chat.type), parse_mode="HTML", disable_web_page_preview=True
+        )
+        return
+
+    # Cooldown: 1 /tcanvas por user a cada 5s. Resposta amigável, sem log
+    # ruidoso (qualquer pessoa que clica 2x rápido cai aqui — esperado).
+    remaining = _check_cooldown(message.from_user.id)
+    if remaining is not None:
+        await message.answer(
+            f"Aguarda {remaining:.0f}s antes de pedir outro Canvas."
         )
         return
 
