@@ -1,0 +1,313 @@
+{
+  "associatedMedia" : {
+
+  },
+  "associatedMessageIds" : [
+
+  ],
+  "associatedMessages" : {
+    "items" : [
+
+    ]
+  },
+  "associatedStories" : {
+
+  },
+  "attributes" : [
+    {
+      "associatedMessageIds" : [
+
+      ],
+      "automaticTimestampBasedAttribute" : {
+        ".0" : 0,
+        ".1" : 1780531428
+      },
+      "countdownBeginTime" : 1779926628,
+      "timeout" : 604800
+    },
+    {
+      "entities" : [
+
+      ]
+    },
+    {
+      "count" : 0,
+      "latestUsers" : [
+
+      ]
+    },
+    {
+      "flags" : {
+        "rawValue" : 8
+      },
+      "rows" : [
+        {
+          "buttons" : [
+            {
+              "action" : {
+                "callback" : {
+                  "data" : {
+                    "capacity" : 19,
+                    "freeWhenDone" : true,
+                    "length" : 19,
+                    "memory" : {
+                      "pointerValue" : 5360054528
+                    },
+                    "offset" : 0
+                  },
+                  "requiresPassword" : false
+                }
+              },
+              "title" : "👥 Abrir aqui"
+            }
+          ]
+        },
+        {
+          "buttons" : [
+            {
+              "action" : {
+                "callback" : {
+                  "data" : {
+                    "capacity" : 16,
+                    "freeWhenDone" : true,
+                    "length" : 16,
+                    "memory" : {
+                      "pointerValue" : 5326232384
+                    },
+                    "offset" : 0
+                  },
+                  "requiresPassword" : false
+                }
+              },
+              "title" : "👤 Abrir no chat privado"
+            }
+          ]
+        },
+        {
+          "buttons" : [
+            {
+              "action" : {
+                "callback" : {
+                  "data" : {
+                    "capacity" : 17,
+                    "freeWhenDone" : true,
+                    "length" : 17,
+                    "memory" : {
+                      "pointerValue" : 5360053664
+                    },
+                    "offset" : 0
+                  },
+                  "requiresPassword" : false
+                }
+              },
+              "title" : "💎 Patrocine este grupo"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "flags" : {
+        "rawValue" : 1
+      }
+    },
+    {
+      "pts" : 9212
+    }
+  ],
+  "author" : {
+    "accessHash" : {
+      "personal" : -5906333371107649926
+    },
+    "botInfo" : {
+      "flags" : {
+        "rawValue" : 3939
+      },
+      "inlinePlaceholder" : "…"
+    },
+    "firstName" : "tigraoTOOLS",
+    "flags" : {
+      "rawValue" : 0
+    },
+    "id" : {
+      "id" : {
+        "rawValue" : 8671952272
+      },
+      "namespace" : {
+        "rawValue" : 0
+      }
+    },
+    "photo" : [
+      {
+        "dimensions" : {
+          "height" : 80,
+          "width" : 80
+        },
+        "hasVideo" : false,
+        "immediateThumbnailData" : "",
+        "isPersonal" : false,
+        "progressiveSizes" : [
+
+        ],
+        "resource" : {
+          "datacenterId" : 1,
+          "photoId" : 5181421075743575071,
+          "sizeSpec" : "small"
+        },
+        "typeHint" : "generic"
+      },
+      {
+        "dimensions" : {
+          "height" : 640,
+          "width" : 640
+        },
+        "hasVideo" : false,
+        "immediateThumbnailData" : "",
+        "isPersonal" : false,
+        "progressiveSizes" : [
+
+        ],
+        "resource" : {
+          "datacenterId" : 1,
+          "photoId" : 5181421075743575071,
+          "sizeSpec" : "fullSize"
+        },
+        "typeHint" : "generic"
+      }
+    ],
+    "storiesHidden" : false,
+    "username" : "tigraoTOOLSbot",
+    "usernames" : [
+
+    ]
+  },
+  "customTags" : [
+
+  ],
+  "flags" : {
+    "rawValue" : 68
+  },
+  "globalTags" : {
+    "rawValue" : 0
+  },
+  "id" : {
+    "id" : 4108,
+    "namespace" : 0,
+    "peerId" : {
+      "id" : {
+        "rawValue" : 3839856024
+      },
+      "namespace" : {
+        "rawValue" : 2
+      }
+    }
+  },
+  "localTags" : {
+    "rawValue" : 0
+  },
+  "media" : [
+
+  ],
+  "peers" : {
+    "items" : [
+      {
+        ".0" : {
+          "id" : {
+            "rawValue" : 3839856024
+          },
+          "namespace" : {
+            "rawValue" : 2
+          }
+        },
+        ".1" : {
+          "accessHash" : {
+            "personal" : -8919996904231962790
+          },
+          "adminRights" : {
+            "rights" : {
+              "rawValue" : 518847
+            }
+          },
+          "creationDate" : 1774714488,
+          "defaultBannedRights" : {
+            "flags" : {
+              "rawValue" : 427008
+            },
+            "untilDate" : 2147483647
+          },
+          "flags" : {
+            "rawValue" : 2
+          },
+          "id" : {
+            "id" : {
+              "rawValue" : 3839856024
+            },
+            "namespace" : {
+              "rawValue" : 2
+            }
+          },
+          "info" : {
+            "group" : {
+              "flags" : {
+                "rawValue" : 0
+              }
+            }
+          },
+          "participationStatus" : "member",
+          "photo" : [
+            {
+              "dimensions" : {
+                "height" : 80,
+                "width" : 80
+              },
+              "hasVideo" : false,
+              "immediateThumbnailData" : "",
+              "isPersonal" : false,
+              "progressiveSizes" : [
+
+              ],
+              "resource" : {
+                "datacenterId" : 1,
+                "photoId" : 4940797714828561932,
+                "sizeSpec" : "small"
+              },
+              "typeHint" : "generic"
+            },
+            {
+              "dimensions" : {
+                "height" : 640,
+                "width" : 640
+              },
+              "hasVideo" : false,
+              "immediateThumbnailData" : "",
+              "isPersonal" : false,
+              "progressiveSizes" : [
+
+              ],
+              "resource" : {
+                "datacenterId" : 1,
+                "photoId" : 4940797714828561932,
+                "sizeSpec" : "fullSize"
+              },
+              "typeHint" : "generic"
+            }
+          ],
+          "storiesHidden" : false,
+          "title" : "tigraoTESTS",
+          "usernames" : [
+
+          ],
+          "version" : 0
+        }
+      }
+    ]
+  },
+  "stableId" : 83324,
+  "stableVersion" : 1,
+  "tags" : {
+    "rawValue" : 0
+  },
+  "text" : "Onde você deseja abrir o menu de configurações?",
+  "threadId" : 1,
+  "timestamp" : 1779926628
+}
