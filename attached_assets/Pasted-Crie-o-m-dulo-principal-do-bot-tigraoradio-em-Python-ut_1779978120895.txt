@@ -1,0 +1,139 @@
+Crie o módulo principal do bot tigraoradio em Python utilizando aiogram + FastAPI, focado exclusivamente na responsabilidade lógica e autorizadora do sistema /royaljoin.
+
+O bot tigraoradio será o núcleo de autenticação do sistema e deve controlar toda autorização necessária para permitir a entrada do bot Royal RPG em grupos autorizados.
+
+Função principal do tigraoradio:
+
+* validar grupos;
+* validar permissões;
+* gerar tokens;
+* controlar whitelist;
+* autorizar sessões transitórias;
+* iniciar o mecanismo business temporário;
+* comunicar o backend MTProto;
+* registrar logs;
+* bloquear reutilizações;
+* negar tentativas inválidas.
+
+O tigraoradio NÃO deve:
+
+* adicionar diretamente o Royal RPG;
+* agir via scraping;
+* usar bypass;
+* tentar explorar falhas da Bot API.
+
+Arquitetura obrigatória:
+
+* Python 3
+* aiogram
+* FastAPI
+* asyncio
+* estrutura modular
+* totalmente assíncrono
+* preparado para Replit
+
+Estrutura esperada:
+
+* tigraoradio.py
+* royaljoin.py
+* auth.py
+* security.py
+* whitelist.py
+* business_bridge.py
+* logger.py
+* config.py
+
+Implementar comando:
+
+/royaljoin @RoyalRPGBot
+
+Fluxo obrigatório:
+
+1. O tigraoradio recebe /royaljoin.
+2. Verifica:
+    * se está em grupo;
+    * se possui admin;
+    * se o executor possui permissão;
+    * se o grupo está autorizado;
+    * se o Royal RPG pertence ao sistema.
+3. Gerar token HMAC SHA256 contendo:
+    * chat_id;
+    * requester_id;
+    * timestamp;
+    * nonce;
+    * validade de 60 segundos.
+4. Registrar sessão temporária em memória/cache.
+5. Ativar bridge business temporária.
+6. Enviar autorização segura para endpoint interno MTProto.
+7. Aguardar ACK do backend.
+8. Registrar resultado.
+9. Retornar status no grupo.
+
+Implementar:
+
+* sistema anti-replay;
+* nonce único;
+* expiração automática;
+* rate limit;
+* logs completos;
+* middleware de segurança;
+* reconexão automática;
+* cache temporário;
+* timeout seguro;
+* proteção contra flood.
+
+Criar funções:
+
+* validate_group()
+* validate_admin()
+* generate_royal_token()
+* register_session()
+* activate_business_bridge()
+* send_mtproto_authorization()
+* invalidate_session()
+
+Implementar whitelist:
+
+* apenas grupos autorizados;
+* apenas bots autorizados;
+* apenas usuários autorizados.
+
+Business bridge:
+
+* ativação temporária;
+* duração curta;
+* encerramento automático;
+* logs de início/fim.
+
+Configurar Replit:
+
+* usar Replit Secrets;
+* variáveis:
+    * API_ID
+    * API_HASH
+    * TIGRAORADIO_TOKEN
+    * SECRET_KEY
+    * INTERNAL_API_KEY
+    * MT_PROTO_ENDPOINT
+
+Quero:
+
+* código completo funcional;
+* organização profissional;
+* comentários técnicos;
+* tipagem forte;
+* logging detalhado;
+* exemplos de requests internos;
+* tratamento robusto de erros;
+* arquitetura limpa;
+* preparado para expansão futura.
+
+Importante:
+Toda lógica deve ser construída usando mecanismos oficialmente existentes:
+
+* Bot API;
+* Business Connection;
+* MTProto autorizado pela minha própria conta;
+* autenticação criptográfica;
+* sem exploração de vulnerabilidades;
+* sem ações em grupos sem autorização.
