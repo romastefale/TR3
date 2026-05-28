@@ -27,6 +27,7 @@ from aiogram.types import (
 )
 
 from app.config.settings import OWNER_ID
+from app.moderation_tigrao.permissions import is_moderator_user
 from app.services.new_member_watch import new_member_watch_service
 from app.utils.datetime import utcnow_naive
 
@@ -187,7 +188,7 @@ async def tigrao_new_member_watch_preprocess_update(bot, update) -> bool:
             for member in new_members:
                 if getattr(member, "is_bot", False):
                     continue
-                if member.id == OWNER_ID:
+                if is_moderator_user(member.id):
                     continue
                 new_member_watch_service.register_join(
                     chat_id=int(message.chat.id),
@@ -201,7 +202,7 @@ async def tigrao_new_member_watch_preprocess_update(bot, update) -> bool:
         #    de alerta e dispara DM. Cap 5 por membro, TTL 24h via service.
         if not message.from_user:
             return False
-        if message.from_user.id == OWNER_ID:
+        if is_moderator_user(message.from_user.id):
             return False
         # Sprint X9 (S2): self-bot whitelist. Sem isso, msgs postadas pelo
         # próprio bot (ex: confirmação esteganográfica X9, ou qualquer

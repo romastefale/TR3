@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import contextvars
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.moderation_tigrao.permissions import OWNER_ID
+from app.moderation_tigrao.permissions import MODERATOR_IDS, OWNER_ID
 
 
 # Sprint 7 (T01): se o owner abre um fluxo "envie user_id" / "envie texto"
@@ -25,22 +26,63 @@ class TigrãoSession:
     updated_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-# Singleton global por design: todos os entry points do /tigrao checam
-# `is_owner_private_message` / `is_owner_callback` (OWNER_ID em DM), então
-# o "estado" só existe pra um único usuário humano de cada vez. NÃO
-# refatorar pra dict por user_id sem antes mudar o modelo de permissão.
-# Sprint 6 (TR3) revisou e confirmou: zero risco prático de state leak.
-_session = TigrãoSession()
+# Correção do FSM (co-moderação): antes o estado era um singleton global,
+# válido só porque um único humano (OWNER) usava o /tigrao. Agora há 2
+# moderadores autorizados que podem operar SIMULTANEAMENTE — se
+# compartilhassem o mesmo singleton, o "selecionar grupo" / "aguardando
+# user_id" de um sobrescreveria o do outro (state leak real).
+#
+# Solução: uma sessão por user_id. O user_id corrente é propagado por um
+# ContextVar setado no início do processamento do update (ver
+# set_current_user em app/main.py), antes dos handlers diretos e do
+# dispatcher. Cada handler/asyncio task herda o contexto, então
+# get_session() devolve a sessão certa sem precisar passar user_id em
+# todas as ~70 chamadas.
+_sessions: dict[int, TigrãoSession] = {}
+
+_current_user_id: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "tigrao_current_user_id", default=None
+)
+
+
+def set_current_user(user_id: int | None) -> None:
+    """Define o moderador corrente pro contexto atual (task/request).
+
+    Chamado no início do processamento de cada update. Quando user_id é
+    None (update sem from_user), cai no bucket 0 — inofensivo porque
+    nenhum moderador autorizado tem id 0.
+    """
+    _current_user_id.set(user_id)
+
+
+def _current_key() -> int:
+    uid = _current_user_id.get()
+    return uid if uid is not None else 0
 
 
 def get_session() -> TigrãoSession:
-    return _session
+    key = _current_key()
+    # Bound de memória: só persiste sessão pra moderador autorizado. Filtros
+    # de mensagem (ddx_router/ddx_soft_router) chamam get_session() pra TODA
+    # msg de texto ANTES da checagem de auth — se persistíssemos por qualquer
+    # user_id, _sessions cresceria sem limite com tráfego público (DoS). Pra
+    # não-moderador retorna objeto transitório vazio (waiting_for=None),
+    # nunca armazenado. _sessions tem no máx. len(MODERATOR_IDS) entradas.
+    if key not in MODERATOR_IDS:
+        return TigrãoSession(owner_id=key or OWNER_ID)
+    session = _sessions.get(key)
+    if session is None:
+        session = TigrãoSession(owner_id=key)
+        _sessions[key] = session
+    return session
 
 
 def reset_session() -> TigrãoSession:
-    global _session
-    _session = TigrãoSession()
-    return _session
+    key = _current_key()
+    session = TigrãoSession(owner_id=key or OWNER_ID)
+    if key in MODERATOR_IDS:
+        _sessions[key] = session
+    return session
 
 
 def set_selected_group(chat_id: int, title: str | None = None) -> TigrãoSession:

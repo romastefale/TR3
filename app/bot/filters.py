@@ -12,16 +12,20 @@ from __future__ import annotations
 from aiogram.filters import Filter
 from aiogram.types import CallbackQuery, Message, TelegramObject
 
-from app.config.settings import OWNER_ID
+from app.config.settings import MODERATOR_IDS
 
 
 class IsOwner(Filter):
-    """Passa só se o `from_user.id` == OWNER_ID. Funciona pra Message e
-    CallbackQuery. Silencioso quando bloqueia (handler simplesmente não roda).
+    """Passa se o `from_user.id` é um moderador autorizado (owner OU 2º
+    co-moderador). Funciona pra Message e CallbackQuery. Silencioso quando
+    bloqueia (handler simplesmente não roda).
+
+    Nome mantido por estabilidade (usado em ~10 handlers). Co-moderação:
+    ambos os IDs em MODERATOR_IDS passam.
     """
 
     async def __call__(self, event: TelegramObject) -> bool:
         if isinstance(event, (Message, CallbackQuery)):
             user = event.from_user
-            return bool(user and user.id == OWNER_ID)
+            return bool(user and user.id in MODERATOR_IDS)
         return False

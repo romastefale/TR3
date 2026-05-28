@@ -13,7 +13,7 @@ from aiogram.exceptions import TelegramBadRequest, TelegramForbiddenError
 from aiogram.types import CallbackQuery, LinkPreviewOptions
 
 from app.moderation_tigrao.actions import ban_user, delete_message, mute_user
-from app.moderation_tigrao.permissions import OWNER_ID, is_owner_callback
+from app.moderation_tigrao.permissions import OWNER_ID, is_moderator_user, is_owner_callback
 from app.moderation_tigrao.storage import log_action
 
 logger = logging.getLogger(__name__)
@@ -67,8 +67,8 @@ async def tigrao_nmw_ban(callback: CallbackQuery) -> None:
         await callback.answer("Callback inválido.", show_alert=True)
         return
     chat_id, user_id = parsed
-    if user_id == OWNER_ID:
-        await callback.answer("Não posso banir o owner.", show_alert=True)
+    if is_moderator_user(user_id):
+        await callback.answer("Não posso banir um moderador.", show_alert=True)
         return
     try:
         await ban_user(callback.bot, chat_id, user_id)
@@ -100,8 +100,8 @@ async def tigrao_nmw_mute(callback: CallbackQuery) -> None:
         await callback.answer("Callback inválido.", show_alert=True)
         return
     chat_id, user_id = parsed
-    if user_id == OWNER_ID:
-        await callback.answer("Não posso mutar o owner.", show_alert=True)
+    if is_moderator_user(user_id):
+        await callback.answer("Não posso mutar um moderador.", show_alert=True)
         return
     try:
         await mute_user(callback.bot, chat_id, user_id, timedelta(hours=1))

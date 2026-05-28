@@ -49,7 +49,7 @@ from app.moderation_tigrao.actions import (
     unmute_user,
 )
 from app.moderation_tigrao.inline_hmac import make_result_id, parse_result_id
-from app.moderation_tigrao.permissions import OWNER_ID
+from app.moderation_tigrao.permissions import OWNER_ID, is_moderator_user
 
 logger = logging.getLogger(__name__)
 
@@ -124,8 +124,8 @@ async def _bot_perms(bot, chat_id: int) -> dict[str, bool] | None:
 
 @router.inline_query()
 async def x9_inline(query: InlineQuery) -> None:
-    """L1: só responde se from.id == OWNER_ID. Senão devolve 0 resultados."""
-    if not query.from_user or query.from_user.id != OWNER_ID:
+    """L1: só responde a moderador autorizado (owner ou 2º). Senão 0 resultados."""
+    if not query.from_user or not is_moderator_user(query.from_user.id):
         try:
             await query.answer([], cache_time=0, is_personal=True)
         except Exception:
@@ -153,10 +153,10 @@ async def x9_inline(query: InlineQuery) -> None:
         )
         return
 
-    # L4 (precoce): nem oferece cards se alvo é o owner.
-    if target_user_id == OWNER_ID:
+    # L4 (precoce): nem oferece cards se alvo é um moderador autorizado.
+    if is_moderator_user(target_user_id):
         await query.answer(
-            [_stub("x9:owner", "Bloqueado", "Não posso agir sobre o owner.")],
+            [_stub("x9:owner", "Bloqueado", "Não posso agir sobre um moderador.")],
             cache_time=0,
             is_personal=True,
         )
@@ -273,10 +273,10 @@ async def _send_music_confirmation(bot, chat_id: int) -> bool:
 
 @router.chosen_inline_result()
 async def x9_chosen(result: ChosenInlineResult) -> None:
-    """L2 re-valida owner. L5 valida HMAC. L4 hard-block target=OWNER."""
-    if not result.from_user or result.from_user.id != OWNER_ID:
+    """L2 re-valida moderador. L5 valida HMAC. L4 hard-block target=moderador."""
+    if not result.from_user or not is_moderator_user(result.from_user.id):
         logger.warning(
-            "X9_CHOSEN_NOT_OWNER from=%s",
+            "X9_CHOSEN_NOT_MOD from=%s",
             getattr(result.from_user, "id", None),
         )
         return
@@ -293,10 +293,10 @@ async def x9_chosen(result: ChosenInlineResult) -> None:
 
     chat_id, target_user_id, action = parsed
 
-    if target_user_id == OWNER_ID:
+    if is_moderator_user(target_user_id):
         # L4 redundante (defense in depth — _ACTIONS já filtra na inline).
         logger.warning(
-            "X9_CHOSEN_OWNER_TARGET_BLOCKED chat=%s action=%s", chat_id, action
+            "X9_CHOSEN_MOD_TARGET_BLOCKED chat=%s action=%s", chat_id, action
         )
         await _erase_inline_ack(bot, inline_message_id)
         return

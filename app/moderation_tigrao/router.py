@@ -50,7 +50,12 @@ def _new_picker_nonce() -> str:
     """Sprint X3: token curto pra invalidar pickers antigos."""
     return _secrets.token_urlsafe(6)
 from app.moderation_tigrao.parsers import parse_chat_id, parse_duration, parse_message_link, parse_user_id
-from app.moderation_tigrao.permissions import OWNER_ID, is_owner_callback, is_owner_private_message
+from app.moderation_tigrao.permissions import (
+    OWNER_ID,
+    is_moderator_user,
+    is_owner_callback,
+    is_owner_private_message,
+)
 from app.moderation_tigrao.state import (
     clear_action,
     consume_if_expired,
@@ -528,9 +533,10 @@ async def tigrao_private_text(message: Message) -> None:
         except RuntimeError as exc:
             await message.answer(error_text("Não foi possível resolver", str(exc), "Confira o @username ou use o user_id numérico."))
             return
-        # Hard-block OWNER_ID: owner não pode se auto-moderar reactions/mute.
-        if target_user_id == OWNER_ID:
-            await message.answer(error_text("Operação bloqueada", "Você não pode se moderar.", "Cancele e escolha outro alvo."))
+        # Hard-block moderadores: nenhum moderador autorizado (owner ou 2º
+        # co-moderador) pode ser alvo de moderação de reactions/mute.
+        if is_moderator_user(target_user_id):
+            await message.answer(error_text("Operação bloqueada", "Você não pode moderar um moderador.", "Cancele e escolha outro alvo."))
             return
         session.payload["target_user_id"] = target_user_id
         session.payload["target_label"] = target_label
@@ -1192,8 +1198,8 @@ async def tigrao_rmod_pick(callback: CallbackQuery) -> None:
     except ValueError:
         await callback.answer("user_id inválido no callback.", show_alert=True)
         return
-    if target_user_id == OWNER_ID:
-        await callback.answer("Você não pode se moderar.", show_alert=True)
+    if is_moderator_user(target_user_id):
+        await callback.answer("Você não pode moderar um moderador.", show_alert=True)
         return
     reactors = session.payload.get("reactors") or []
     reactor = next((r for r in reactors if int(r.get("user_id", 0)) == target_user_id), None)

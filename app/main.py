@@ -41,7 +41,8 @@ from app.moderation_tigrao.keyboards import home_keyboard
 from app.moderation_tigrao.member_tag_router import tigrao_member_tag_receive_text
 from app.moderation_tigrao.permissions import is_owner_private_message
 from app.moderation_tigrao.router import tigrao_private_text
-from app.moderation_tigrao.state import get_session
+from app.moderation_tigrao.state import get_session, set_current_user as tigrao_set_current_user
+from app.btb.state import set_current_user as btb_set_current_user
 from app.moderation_tigrao.storage import remember_group
 from app.moderation_tigrao.texts import home_text
 from app.bot.music_extras import register_music_extra_handlers
@@ -96,6 +97,33 @@ def _is_btb_command(text_value: str | None) -> bool:
 
 
 BTB_WAITING_STATES = {"command_text", "group_chat_id", "wait_seconds", "add_target_username"}
+
+
+def _extract_update_user_id(update: Update) -> int | None:
+    """Extrai o from_user.id do update pra propagar a sessão FSM correta.
+
+    Cobre os tipos de update que carregam ator humano (mensagem, callback,
+    inline, etc.). Updates sem from_user (ex.: poll) retornam None — caem no
+    bucket 0 das sessões, inofensivo.
+    """
+    for attr in (
+        "message",
+        "edited_message",
+        "channel_post",
+        "edited_channel_post",
+        "callback_query",
+        "inline_query",
+        "chosen_inline_result",
+        "my_chat_member",
+        "chat_member",
+        "chat_join_request",
+    ):
+        event = getattr(update, attr, None)
+        if event is not None:
+            user = getattr(event, "from_user", None)
+            if user is not None:
+                return user.id
+    return None
 
 
 def _log_message_update(update: Update) -> None:
@@ -449,6 +477,13 @@ async def telegram_webhook(request: Request):
     try:
         data = await request.json()
         update = Update.model_validate(data, context={"bot": bot})
+        # Correção do FSM (co-moderação): propaga o user_id corrente pros
+        # ContextVars das sessões ANTES de qualquer handler (diretos +
+        # dispatcher). Garante que cada moderador opere na própria sessão
+        # FSM, sem sobrescrever a do outro quando moderam ao mesmo tempo.
+        _current_uid = _extract_update_user_id(update)
+        tigrao_set_current_user(_current_uid)
+        btb_set_current_user(_current_uid)
         if bot is None:
             logger.error("Bot não inicializado")
             return {"ok": True}

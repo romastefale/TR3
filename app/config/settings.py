@@ -29,6 +29,20 @@ def _bool_env(name: str, default: bool) -> bool:
 
 OWNER_ID = _int_env("OWNER_ID", 8505890439)
 
+# Co-moderador autorizado. Decisão explícita do owner: este é o ÚNICO outro
+# usuário que recebe as MESMAS permissões do dono (principalmente moderação)
+# e pode operar o /tigrao simultaneamente com o owner. Hardcoded de propósito
+# (NÃO é env var) — não deve ser configurável nem ampliável sem pedido
+# explícito. Ambos compartilham autorização e hard-block (nenhum pode ser
+# alvo de moderação).
+SECOND_MODERATOR_ID = 6834269386
+
+# Conjunto de moderadores autorizados (owner + co-moderador). Usado por
+# is_moderator_user / filtros de acesso / hard-blocks. OWNER_ID continua
+# sendo a fonte única pra alvo de notificações DM (ddx soft, new-member-watch,
+# inline) — co-moderação NÃO redireciona DMs, só concede poder de ação.
+MODERATOR_IDS: tuple[int, ...] = (OWNER_ID, SECOND_MODERATOR_ID)
+
 SPOTIFY_CLIENT_ID = os.getenv("SPOTIFY_CLIENT_ID", "")
 SPOTIFY_CLIENT_SECRET = os.getenv("SPOTIFY_CLIENT_SECRET", "")
 
