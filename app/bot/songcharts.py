@@ -14,7 +14,7 @@ from aiogram.types import (
     Message,
 )
 
-from app.config.settings import OWNER_ID
+from app.moderation_tigrao.permissions import is_moderator_user
 from app.services.lastfm import lastfm_service
 from app.services.lastfm_group import lastfm_group_service
 from app.services.monthfm_card import render_monthfm_card
@@ -131,8 +131,9 @@ async def songcharts(message: Message) -> None:
     chat = message.chat
 
     if chat.type == "private":
-        # DM: exclusivo do OWNER (modo global, agrega todos os conectados).
-        if requester.id != OWNER_ID:
+        # DM: exclusivo de moderador autorizado (owner ou 2º). Modo global,
+        # agrega todos os conectados.
+        if not is_moderator_user(requester.id):
             await message.answer(_dm_deny_text(), parse_mode="HTML")
             return
         await message.answer(
@@ -315,8 +316,8 @@ async def songcharts_callback(query: CallbackQuery) -> None:
                 show_alert=True,
             )
             return
-    else:  # scope == "a" (DM owner)
-        if query.from_user.id != OWNER_ID:
+    else:  # scope == "a" (DM moderador)
+        if not is_moderator_user(query.from_user.id):
             await query.answer("Acesso negado.", show_alert=True)
             return
 
