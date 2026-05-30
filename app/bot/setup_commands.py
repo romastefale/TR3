@@ -18,6 +18,7 @@ _PUBLIC_COMMANDS: list[tuple[str, str]] = [
     ("playing", "Música tocando agora"),
     ("albnow", "Foco no álbum atual"),
     ("tcanvas", "Canvas do Spotify (vídeo)"),
+    ("tstory", "Story da música tocando"),
     ("tnow", "Mosaico do grupo"),
     ("nowp", "Enviar sua música pra um grupo"),
     ("myself", "Seu extrato pessoal Last.fm"),

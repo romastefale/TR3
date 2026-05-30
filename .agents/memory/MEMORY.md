@@ -1,0 +1,2 @@
+- [Bot self identity](bot-self-identity.md) — bot lê o próprio nome/foto via getMe + getUserProfilePhotos(self_id); cache só após getMe OK.
+- [Playwright no dev sandbox](playwright-dev-sandbox.md) — Chromium não vem baixado no Replit dev (download estoura timeout); render só roda em prod (Railway).
