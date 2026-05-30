@@ -17,6 +17,7 @@ from app.bot.songcharts import router as songcharts_router
 from app.bot.tcanvas import router as tcanvas_router
 from app.bot.tnow import router as tnow_router
 from app.bot.tstory import router as tstory_router
+from app.bot.radiofm import router as radiofm_router
 from app.bot.weekfm import router as weekfm_router, weekfm as weekfm_command
 from app.bot.mention_reactor import react_if_mention  # Sprint 8
 from app.bot.setup_commands import setup_bot_commands  # Sprint 9 (#4)
@@ -371,6 +372,7 @@ async def on_startup() -> None:
             dispatcher.include_router(tnow_router)
             dispatcher.include_router(tcanvas_router)
             dispatcher.include_router(tstory_router)
+            dispatcher.include_router(radiofm_router)
             dispatcher.include_router(myself_router)
             dispatcher.include_router(songcharts_router)
             dispatcher.include_router(btb_router)

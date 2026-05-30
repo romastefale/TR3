@@ -11,8 +11,9 @@ A maior resolução é `photos.photos[0][-1].file_id`.
 sucesso. Em falha transitória de `getMe` sem cache prévio, devolva um fallback
 efêmero (não cacheado) para não congelar nome/foto errados por todo o TTL.
 
-**Why:** revisão apontou que cachear o fallback mínimo por 1h contraria o
-requisito de "nome/foto sempre atuais" após uma falha de rede passageira.
+**Why:** cachear o fallback mínimo pelo TTL inteiro congela nome/foto errados
+após uma falha de rede passageira, contrariando "identidade sempre atual".
 
-**How to apply:** ver `app/services/bot_identity.py` — TTL 1h, `asyncio.Lock`
-no refresh pra evitar chamadas duplicadas quando vários cards expiram juntos.
+**How to apply:** proteja o refresh com um lock async (evita chamadas
+duplicadas quando vários cards expiram o TTL juntos) e só renove o cache em
+sucesso de getMe.

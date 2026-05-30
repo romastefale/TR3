@@ -759,12 +759,18 @@ def _register_handlers(dp: Dispatcher) -> None:
                 event.chat.id, event.message_id, event.user.id,
             )
 
-    # Sprint X9: filter explícito limita este handler a query=="playing".
-    # Sem o filter, queries de outros handlers (ex: X9 owner-only com
-    # `<chat_id> <user_id>`) batem aqui primeiro no root e o `return` cedo
-    # marca como handled, abortando propagação pros sub-routers.
-    @dp.inline_query(lambda q: (q.query or "").strip().lower() == "playing")
-    async def inline_play(query: InlineQuery) -> None:
+    # Inline público (usuários comuns). Query vazia (ou "playing") -> card da
+    # música tocando como 1ª opção. Query com termo -> busca por termo (mesmo
+    # motor do /radiofm). O formato owner-only de moderação X9
+    # (`<chat_id> <user_id>`, dois inteiros) é EXCLUÍDO via filter pra cair no
+    # sub-router de moderação — root é testado antes dos sub_routers em aiogram3.
+    def _is_x9_inline_format(query: InlineQuery) -> bool:
+        parts = (query.query or "").strip().split()
+        if len(parts) != 2:
+            return False
+        return all(p.lstrip("-").isdigit() for p in parts)
+
+    async def _answer_playing(query: InlineQuery) -> None:
         track = await music_service.get_current_or_last_played(query.from_user.id)
         if not track:
             await query.answer([], cache_time=1, is_personal=True)
@@ -773,7 +779,9 @@ def _register_handlers(dp: Dispatcher) -> None:
         if not cover:
             await query.answer([], cache_time=1, is_personal=True)
             return
-        caption = f"<i>{html.escape(query.from_user.full_name or 'Usuário')} · ♫ <a href=\"{track_url}\">{track_name}</a> - {artist}</i>"
+        who = html.escape(query.from_user.full_name or "Usuário")
+        track_part = f'<a href="{track_url}">{track_name}</a>' if track_url else track_name
+        caption = f"<i>{who} · {track_part} - {artist}</i>"
         result = InlineQueryResultPhoto(
             id=str(uuid.uuid4()),
             photo_url=cover,
@@ -782,6 +790,34 @@ def _register_handlers(dp: Dispatcher) -> None:
             parse_mode="HTML",
         )
         await query.answer([result], cache_time=2, is_personal=True)
+
+    @dp.inline_query(lambda q: not _is_x9_inline_format(q))
+    async def inline_public(query: InlineQuery) -> None:
+        raw = (query.query or "").strip()
+        if not raw or raw.lower() == "playing":
+            await _answer_playing(query)
+            return
+
+        from app.services.track_search import search_tracks
+
+        hits = await search_tracks(raw, limit=10)
+        results: list[InlineQueryResultPhoto] = []
+        for hit in hits:
+            if not hit.cover_big:
+                continue
+            caption = f"<b>{html.escape(hit.title)}</b> - <i>{html.escape(hit.artist)}</i>"
+            results.append(
+                InlineQueryResultPhoto(
+                    id=str(uuid.uuid4()),
+                    photo_url=hit.cover_big,
+                    thumbnail_url=hit.cover_thumb or hit.cover_big,
+                    title=hit.title,
+                    description=hit.artist,
+                    caption=caption,
+                    parse_mode="HTML",
+                )
+            )
+        await query.answer(results, cache_time=5, is_personal=True)
 
     # IMPORTANTE: o filtro `~F.text.startswith("/")` impede que este handler
     # consuma comandos. Sem isso, qualquer texto começando com "/" (ex.:
