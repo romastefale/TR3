@@ -8,6 +8,9 @@ Abordagem: usa o endpoint não-documentado `spclient.wg.spotify.com/canvaz-cache
 com um Bearer token anônimo do web player (`open.spotify.com/get_access_token`).
 Não envolve OAuth do usuário. Mesma técnica usada por canvasdownloader.com e
 github.com/bartleyg/my-spotify-canvas.
+
+O envio/cache do vídeo (reuso de file_id, canal de arquivo, fallback) fica no
+helper compartilhado `deliver_canvas` (mesma lógica do /tly).
 """
 from __future__ import annotations
 
@@ -16,14 +19,12 @@ import time
 
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import BufferedInputFile, Message
+from aiogram.types import Message
 
-from app.bot.telegram import build_playing_payload, _react_to_own_card
+from app.bot.canvas_delivery import deliver_canvas
+from app.bot.telegram import build_playing_payload
 from app.services.connection_check import connect_hint_for, is_user_connected
 from app.services.music import music_service
-from app.services.reactions import reactions_service
-from app.services.spotify import spotify_service
-from app.services.spotify_canvas import spotify_canvas_service
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -52,25 +53,6 @@ def _check_cooldown(user_id: int) -> float | None:
         _tcanvas_last_use.clear()
     _tcanvas_last_use[user_id] = now
     return None
-
-
-async def _send_fallback(message: Message, caption: str, cover: str | None, keyboard) -> Message:
-    """Fallback silencioso: mesmo resultado do /playing normal."""
-    if cover:
-        return await message.answer_photo(photo=cover, caption=caption, parse_mode="HTML", reply_markup=keyboard)
-    return await message.answer(caption, parse_mode="HTML", reply_markup=keyboard)
-
-
-async def _register_card(sent: Message, track: dict, track_id: str, owner_user_id: int) -> None:
-    """Sprint 8: registra card pra reactions tracking. Mesma lógica do /playing."""
-    await reactions_service.register_card(
-        chat_id=sent.chat.id,
-        message_id=sent.message_id,
-        track_id=track_id,
-        owner_user_id=owner_user_id,
-        track_name=str(track.get("track_name") or "").strip() or None,
-        artist_name=str(track.get("artist") or "").strip() or None,
-    )
 
 
 @router.message(Command("tcanvas"))
@@ -105,64 +87,13 @@ async def tcanvas(message: Message) -> None:
         return
     track_id, caption, cover, keyboard, card_emoji = payload
 
-    # Canvas precisa de Spotify track_id base62. Quando o music_service
-    # devolve Last.fm-first, track_id chega como "lfm:<sha1>" — hash interno
-    # que nunca resolve no canvaz-cache. Resolve via Spotify Search API
-    # (Client Credentials, sem OAuth do user). Cache em search_track evita
-    # round-trip repetido. Mantém o track_id original pra _register_card
-    # (likes DB usa "lfm:" como chave histórica — não mexer).
-    canvas_track_id = track_id
-    if track_id.startswith("lfm:"):
-        artist = str(track.get("artist") or "").strip()
-        track_name = str(track.get("track_name") or "").strip()
-        if artist and track_name:
-            try:
-                match = await spotify_service.search_track(artist, track_name)
-                if match and match.get("id"):
-                    canvas_track_id = match["id"]
-                    logger.info(
-                        "TCANVAS_RESOLVED lfm=%s -> spotify=%s artist=%s track=%s",
-                        track_id, canvas_track_id, artist, track_name,
-                    )
-                else:
-                    logger.info(
-                        "TCANVAS_RESOLVE_MISS lfm=%s artist=%s track=%s",
-                        track_id, artist, track_name,
-                    )
-            except Exception:
-                logger.exception(
-                    "TCANVAS_RESOLVE_ERROR lfm=%s artist=%s track=%s",
-                    track_id, artist, track_name,
-                )
-
-    canvas_url = await spotify_canvas_service.get_canvas_url(canvas_track_id)
-    if not canvas_url:
-        logger.info("TCANVAS_NO_CANVAS track_id=%s", track_id)
-        sent = await _send_fallback(message, caption, cover, keyboard)
-        await _register_card(sent, track, track_id, message.from_user.id)
-        # Sprint 10: bot reage no card (mesma lógica do /playing).
-        await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, card_emoji)
-        return
-
-    canvas_bytes = await spotify_canvas_service.download_canvas_bytes(canvas_url)
-    if not canvas_bytes:
-        logger.info("TCANVAS_DOWNLOAD_FAILED track_id=%s", track_id)
-        sent = await _send_fallback(message, caption, cover, keyboard)
-        await _register_card(sent, track, track_id, message.from_user.id)
-        await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, card_emoji)
-        return
-
-    try:
-        sent = await message.answer_video(
-            video=BufferedInputFile(canvas_bytes, filename=f"canvas-{track_id}.mp4"),
-            caption=caption,
-            parse_mode="HTML",
-            reply_markup=keyboard,
-        )
-        await _register_card(sent, track, track_id, message.from_user.id)
-        await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, card_emoji)
-    except Exception:
-        logger.exception("TCANVAS_SEND_FAILED track_id=%s", track_id)
-        sent = await _send_fallback(message, caption, cover, keyboard)
-        await _register_card(sent, track, track_id, message.from_user.id)
-        await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, card_emoji)
+    await deliver_canvas(
+        message,
+        track=track,
+        track_id=track_id,
+        caption=caption,
+        cover=cover,
+        card_emoji=card_emoji,
+        keyboard=keyboard,
+        log_prefix="TCANVAS",
+    )

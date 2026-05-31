@@ -1,2 +1,3 @@
 - [Bot self identity](bot-self-identity.md) — bot lê o próprio nome/foto via getMe + getUserProfilePhotos(self_id); cache só após getMe OK.
 - [Playwright no dev sandbox](playwright-dev-sandbox.md) — Chromium não vem baixado no Replit dev (download estoura timeout); render só roda em prod (Railway).
+- [Canvas file_id cache](canvas-fileid-cache.md) — /tcanvas e /tly cacheiam o vídeo por file_id (chave = Spotify id, nunca lfm:); file_id pode invalidar → forget+reupload.

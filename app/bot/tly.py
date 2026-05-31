@@ -6,6 +6,9 @@
 A letra vem do lyrics.ovh (sem chave). O trecho é o refrão (parte que mais se
 repete); sem refrão detectável, cai nas primeiras linhas. Sem letra, sai só o
 cabeçalho. Mesmo fallback silencioso do /tcanvas (vídeo → foto → texto).
+
+O envio/cache do vídeo (reuso de file_id, canal de arquivo, fallback) fica no
+helper compartilhado `deliver_canvas` (mesma lógica do /tcanvas, sem botões).
 """
 from __future__ import annotations
 
@@ -14,15 +17,13 @@ import time
 
 from aiogram import Router
 from aiogram.filters import Command
-from aiogram.types import BufferedInputFile, Message
+from aiogram.types import Message
 
-from app.bot.telegram import build_tly_payload, _react_to_own_card
+from app.bot.canvas_delivery import deliver_canvas
+from app.bot.telegram import build_tly_payload
 from app.services.connection_check import connect_hint_for, is_user_connected
 from app.services.lyrics import lyrics_service
 from app.services.music import music_service
-from app.services.reactions import reactions_service
-from app.services.spotify import spotify_service
-from app.services.spotify_canvas import spotify_canvas_service
 
 logger = logging.getLogger(__name__)
 router = Router()
@@ -43,24 +44,6 @@ def _check_cooldown(user_id: int) -> float | None:
         _tly_last_use.clear()
     _tly_last_use[user_id] = now
     return None
-
-
-async def _send_fallback(message: Message, caption: str, cover: str | None) -> Message:
-    """Fallback silencioso: foto (capa) ou texto, sem botões."""
-    if cover:
-        return await message.answer_photo(photo=cover, caption=caption, parse_mode="HTML")
-    return await message.answer(caption, parse_mode="HTML")
-
-
-async def _register_card(sent: Message, track: dict, track_id: str, owner_user_id: int) -> None:
-    await reactions_service.register_card(
-        chat_id=sent.chat.id,
-        message_id=sent.message_id,
-        track_id=track_id,
-        owner_user_id=owner_user_id,
-        track_name=str(track.get("track_name") or "").strip() or None,
-        artist_name=str(track.get("artist") or "").strip() or None,
-    )
 
 
 @router.message(Command("tly"))
@@ -101,57 +84,13 @@ async def tly(message: Message) -> None:
         return
     track_id, caption, cover, card_emoji = payload
 
-    # Canvas precisa do Spotify track_id base62. Last.fm-first chega como
-    # "lfm:<sha1>" — resolve via Spotify Search (igual ao /tcanvas). Mantém o
-    # track_id original pro _register_card (chave histórica dos likes).
-    canvas_track_id = track_id
-    if track_id.startswith("lfm:"):
-        if artist_raw and track_name_raw:
-            try:
-                match = await spotify_service.search_track(artist_raw, track_name_raw)
-                if match and match.get("id"):
-                    canvas_track_id = match["id"]
-                    logger.info(
-                        "TLY_RESOLVED lfm=%s -> spotify=%s artist=%s track=%s",
-                        track_id, canvas_track_id, artist_raw, track_name_raw,
-                    )
-                else:
-                    logger.info(
-                        "TLY_RESOLVE_MISS lfm=%s artist=%s track=%s",
-                        track_id, artist_raw, track_name_raw,
-                    )
-            except Exception:
-                logger.exception(
-                    "TLY_RESOLVE_ERROR lfm=%s artist=%s track=%s",
-                    track_id, artist_raw, track_name_raw,
-                )
-
-    canvas_url = await spotify_canvas_service.get_canvas_url(canvas_track_id)
-    if not canvas_url:
-        logger.info("TLY_NO_CANVAS track_id=%s", track_id)
-        sent = await _send_fallback(message, caption, cover)
-        await _register_card(sent, track, track_id, message.from_user.id)
-        await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, card_emoji)
-        return
-
-    canvas_bytes = await spotify_canvas_service.download_canvas_bytes(canvas_url)
-    if not canvas_bytes:
-        logger.info("TLY_DOWNLOAD_FAILED track_id=%s", track_id)
-        sent = await _send_fallback(message, caption, cover)
-        await _register_card(sent, track, track_id, message.from_user.id)
-        await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, card_emoji)
-        return
-
-    try:
-        sent = await message.answer_video(
-            video=BufferedInputFile(canvas_bytes, filename=f"canvas-{track_id}.mp4"),
-            caption=caption,
-            parse_mode="HTML",
-        )
-        await _register_card(sent, track, track_id, message.from_user.id)
-        await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, card_emoji)
-    except Exception:
-        logger.exception("TLY_SEND_FAILED track_id=%s", track_id)
-        sent = await _send_fallback(message, caption, cover)
-        await _register_card(sent, track, track_id, message.from_user.id)
-        await _react_to_own_card(sent.bot, sent.chat.id, sent.message_id, card_emoji)
+    await deliver_canvas(
+        message,
+        track=track,
+        track_id=track_id,
+        caption=caption,
+        cover=cover,
+        card_emoji=card_emoji,
+        keyboard=None,
+        log_prefix="TLY",
+    )

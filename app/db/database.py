@@ -292,9 +292,31 @@ def run_migrations(engine) -> None:
             logger.warning("Sprint X4 new_member_watch table creation failed", exc_info=True)
 
 
+        # Cache de Canvas por file_id (/tcanvas e /tly). Colunas são todas
+        # texto (sem BigInteger), então CREATE TABLE IF NOT EXISTS serve igual
+        # pros dois dialetos.
+        try:
+            conn.execute(
+                text(
+                    """
+                    CREATE TABLE IF NOT EXISTS canvas_files (
+                        track_id VARCHAR PRIMARY KEY,
+                        file_id VARCHAR NOT NULL,
+                        file_unique_id VARCHAR,
+                        created_at """ + ("TIMESTAMP" if dialect_name == "postgresql" else "DATETIME") + """ NOT NULL,
+                        updated_at """ + ("TIMESTAMP" if dialect_name == "postgresql" else "DATETIME") + """ NOT NULL
+                    )
+                    """
+                )
+            )
+        except Exception:
+            logger.warning("DB canvas_files table creation failed", exc_info=True)
+
+
 def init_db() -> None:
     try:
         from app.models.card_message import CardMessage  # noqa: F401  # Sprint 8
+        from app.models.canvas_file import CanvasFile  # noqa: F401  # cache file_id
         from app.models.lastfm_profile import LastfmProfile  # noqa: F401
         from app.models.spotify_token import SpotifyToken  # noqa: F401
         from app.models.track_like import TrackLike  # noqa: F401

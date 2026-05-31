@@ -62,6 +62,17 @@ SPOTIFY_CANVAS_ENABLED = _bool_env("SPOTIFY_CANVAS_ENABLED", True)
 SPOTIFY_CANVAS_SP_DC = os.getenv("SPOTIFY_CANVAS_SP_DC", "").strip()
 SPOTIFY_CANVAS_TIMEOUT_SECONDS = float(os.getenv("SPOTIFY_CANVAS_TIMEOUT_SECONDS", "4"))
 
+# Cache de Canvas via file_id do Telegram (/tcanvas e /tly).
+# O Telegram guarda cada arquivo enviado e devolve um file_id reusável entre
+# chats (mesmo bot) — então depois do 1º envio de uma faixa, os próximos vão
+# por file_id (sem rebaixar do CDN nem re-subir). Persistido em DB.
+CANVAS_CACHE_ENABLED = _bool_env("CANVAS_CACHE_ENABLED", True)
+# Canal privado (arquivo) onde cada Canvas é subido UMA vez. 0 = sem canal:
+# nesse modo o file_id é capturado do próprio envio no grupo (ainda economiza
+# a partir do 2º envio). Com canal setado, o bot precisa ser ADMIN nele.
+# Channel id é tipo -100xxxxxxxxxx (negativo).
+CANVAS_CACHE_CHANNEL_ID = _int_env("CANVAS_CACHE_CHANNEL_ID", 0)
+
 LASTFM_API_KEY = os.getenv("LASTFM_API_KEY", "")
 LASTFM_API_BASE_URL = os.getenv("LASTFM_API_BASE_URL", "https://ws.audioscrobbler.com/2.0/")
 HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", str(SPOTIFY_HTTP_TIMEOUT_SECONDS)))
