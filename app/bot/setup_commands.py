@@ -19,6 +19,7 @@ _PUBLIC_COMMANDS: list[tuple[str, str]] = [
     ("albnow", "Foco no álbum atual"),
     ("tcanvas", "Canvas do Spotify (vídeo)"),
     ("tstory", "Story da música tocando"),
+    ("tly", "Canvas com trecho da letra"),
     ("radiofm", "Buscar e enviar uma música"),
     ("tnow", "Mosaico do grupo"),
     ("nowp", "Enviar sua música pra um grupo"),

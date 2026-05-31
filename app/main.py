@@ -17,6 +17,7 @@ from app.bot.songcharts import router as songcharts_router
 from app.bot.tcanvas import router as tcanvas_router
 from app.bot.tnow import router as tnow_router
 from app.bot.tstory import router as tstory_router
+from app.bot.tly import router as tly_router
 from app.bot.radiofm import router as radiofm_router
 from app.bot.weekfm import router as weekfm_router, weekfm as weekfm_command
 from app.bot.mention_reactor import react_if_mention  # Sprint 8
@@ -372,6 +373,7 @@ async def on_startup() -> None:
             dispatcher.include_router(tnow_router)
             dispatcher.include_router(tcanvas_router)
             dispatcher.include_router(tstory_router)
+            dispatcher.include_router(tly_router)
             dispatcher.include_router(radiofm_router)
             dispatcher.include_router(myself_router)
             dispatcher.include_router(songcharts_router)
@@ -409,6 +411,7 @@ async def on_startup() -> None:
 async def on_shutdown() -> None:
     from app.services.lastfm import lastfm_service  # import local: serviço só usado pra fechar o pool
     from app.services.lastfm_capsule import lastfm_capsule_service  # idem (S5.01 / R5.01)
+    from app.services.lyrics import lyrics_service  # idem (/tly)
 
     await shutdown_telegram_bot()
     await spotify_service.shutdown()
@@ -417,6 +420,8 @@ async def on_shutdown() -> None:
     await lastfm_service.shutdown()
     # Sprint 5 (R5.01): fecha pool httpx do capsule (/monthfm).
     await lastfm_capsule_service.shutdown()
+    # Fecha pool httpx do lyrics.ovh (/tly).
+    await lyrics_service.shutdown()
 
 
 @app.get("/healthz", status_code=200)

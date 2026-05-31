@@ -113,6 +113,30 @@ def _user_mention(message: Message) -> str:
     return f'<a href="tg://user?id={message.from_user.id}">{display_name}</a>'
 
 
+# Negrito unicode (Mathematical Bold) pro nome de exibição no /tly. Telegram
+# já bolda com <b>, mas o /tly quer o nome em fonte negrito-unicode distinta
+# (ex.: 𝐏𝐈) renderizada inline no texto. Mapeia só A-Z/a-z/0-9 — caracteres
+# sem equivalente nesse bloco unicode (acentos PT-BR como ã/é, espaço,
+# pontuação) ficam na forma original.
+_BOLD_UPPER_OFFSET = 0x1D400 - ord("A")
+_BOLD_LOWER_OFFSET = 0x1D41A - ord("a")
+_BOLD_DIGIT_OFFSET = 0x1D7CE - ord("0")
+
+
+def _bold_unicode(text: str) -> str:
+    out: list[str] = []
+    for ch in text:
+        if "A" <= ch <= "Z":
+            out.append(chr(ord(ch) + _BOLD_UPPER_OFFSET))
+        elif "a" <= ch <= "z":
+            out.append(chr(ord(ch) + _BOLD_LOWER_OFFSET))
+        elif "0" <= ch <= "9":
+            out.append(chr(ord(ch) + _BOLD_DIGIT_OFFSET))
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
 async def _resolve_play_button_count(user_id: int, track_id: str, artist: str | None, track_name: str | None) -> tuple[int, str]:
     if artist and track_name:
         lastfm_count = await lastfm_service.get_user_track_playcount(user_id, artist, track_name)
@@ -188,6 +212,51 @@ async def build_playing_payload(
         message.from_user.full_name or "Usuário",
         track,
     )
+
+
+async def build_tly_payload(
+    message: Message, track: dict, lyric_snippet: str | None
+) -> tuple[str, str, str | None, str] | None:
+    """Monta o payload do /tly: cabeçalho enxuto + quote expansível da letra.
+
+    Mesma infra do /playing (registra a play e resolve o contador ♫), mas a
+    legenda é diferente: nome de exibição em negrito unicode · ♫ N · faixa —
+    artista, seguido de um `<blockquote expandable>` com `lyric_snippet`. Sem
+    a linha de ♥ likes. Quando `lyric_snippet` é None/vazio, sai só o
+    cabeçalho. Retorna (track_id, caption HTML, cover_url, card_emoji) ou None
+    se faltar `from_user`/`track_id`.
+
+    Side effect: chama `likes_service.register_play` (igual ao /tcanvas).
+    """
+    if not message.from_user:
+        return None
+    user_id = message.from_user.id
+    display_name_raw = message.from_user.full_name or "Usuário"
+
+    track_id = str(track.get("track_id") or "").strip()
+    if not track_id:
+        return None
+
+    track_name_raw = str(track.get("track_name") or "").strip()
+    artist_raw = str(track.get("artist") or "").strip()
+    try:
+        await likes_service.register_play(user_id, track_id, track_name=track_name_raw, artist_name=artist_raw)
+    except Exception:
+        logger.exception("REGISTER_PLAY_FAILED user=%s track=%s", user_id, track_id)
+
+    total_plays, plays_source = await _resolve_play_button_count(user_id, track_id, artist_raw, track_name_raw)
+
+    track_name, artist, track_url, cover = _track_label(track)
+    track_part = f'<a href="{track_url}">{track_name}</a>' if track_url else track_name
+    name_part = html.escape(_bold_unicode(display_name_raw))
+    header = f"{name_part} · ♫ {total_plays} · {track_part} — <i>{artist}</i>"
+    if lyric_snippet:
+        caption = f"{header}\n<blockquote expandable>{html.escape(lyric_snippet)}</blockquote>"
+    else:
+        caption = header
+
+    card_emoji = _pick_card_emoji(total_plays, plays_source)
+    return track_id, caption, cover, card_emoji
 
 
 async def _safe_delete(message: Message) -> None:
