@@ -18,6 +18,7 @@ import pytest
 
 import app.bot.telegram as tg
 from app.services.lyrics import (
+    SNIPPET_MAX_CHARS,
     SNIPPET_MAX_LINES,
     extract_snippet,
 )
@@ -66,21 +67,56 @@ def test_snippet_so_uma_linha_repetida():
     assert snippet == "Linha gancho repete\nLinha diferente A"
 
 
-def test_snippet_sem_repeticao_cai_nas_primeiras_linhas():
-    """Letra sem nenhuma repetição cai nas primeiras linhas (cap de linhas)."""
+def test_snippet_sem_repeticao_cai_na_primeira_estrofe():
+    """Letra sem repetição cai na primeira estrofe inteira (até o cap)."""
     lyrics = (
         "Linha um\n"
         "Linha dois\n"
         "Linha tres\n"
-        "Linha quatro\n"
-        "Linha cinco\n"
-        "Linha seis\n"
+        "\n"
+        "Estrofe dois A\n"
+        "Estrofe dois B\n"
     )
     snippet = extract_snippet(lyrics)
     assert snippet is not None
     out_lines = snippet.split("\n")
-    assert out_lines == ["Linha um", "Linha dois", "Linha tres", "Linha quatro"]
+    # Primeira estrofe inteira, não cortada no meio.
+    assert out_lines == ["Linha um", "Linha dois", "Linha tres"]
     assert len(out_lines) <= SNIPPET_MAX_LINES
+
+
+def test_snippet_cap_de_seguranca_sem_separacao_de_estrofes():
+    """Sem linha em branco, a 'estrofe' é a letra toda — o cap protege."""
+    lyrics = "\n".join(f"Linha unica {i}" for i in range(30))
+    snippet = extract_snippet(lyrics)
+    assert snippet is not None
+    out_lines = snippet.split("\n")
+    assert len(out_lines) <= SNIPPET_MAX_LINES
+
+
+def test_snippet_linha_unica_gigante_respeita_cap_de_chars():
+    """Letra numa única linha enorme (sem `\\n`) é truncada ao cap de chars."""
+    lyrics = "palavra " * 500  # ~4000 chars, uma linha só
+    snippet = extract_snippet(lyrics)
+    assert snippet is not None
+    assert "\n" not in snippet
+    assert len(snippet) <= SNIPPET_MAX_CHARS
+
+
+def test_snippet_linha_gancho_no_meio_pega_estrofe_inteira():
+    """Linha-gancho repetida no meio da estrofe -> retorna a estrofe inteira."""
+    lyrics = (
+        "Abre a estrofe aqui\n"
+        "Linha gancho repete\n"
+        "Fecha a estrofe aqui\n"
+        "\n"
+        "Outro verso solto\n"
+        "Linha gancho repete\n"
+    )
+    snippet = extract_snippet(lyrics)
+    assert snippet is not None
+    # Estrofe inteira (inclui a linha ANTES do gancho), não do gancho em diante.
+    assert snippet == "Abre a estrofe aqui\nLinha gancho repete\nFecha a estrofe aqui"
 
 
 def test_snippet_letra_vazia_retorna_none():

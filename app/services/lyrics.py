@@ -1,12 +1,13 @@
 """Serviço de letra pro /tly.
 
-Busca a letra completa no lyrics.ovh (grátis, sem chave/auth) e extrai um
-trecho curto pro quote do Telegram. Estratégia do trecho:
+Busca a letra completa no lyrics.ovh (grátis, sem chave/auth) e extrai uma
+estrofe pro quote do Telegram. Estratégia:
 - Refrão = a estrofe (ou linha) que mais se repete na letra.
-- Sem repetição detectável, cai nas primeiras linhas.
+- Sem repetição detectável, cai na primeira estrofe.
 
-O trecho é deliberadamente curto (poucas linhas) — é um excerto, não a letra
-inteira. Toda falha de rede/parse degrada pra None (o caller manda só o
+Sai uma estrofe inteira (refrão de preferência) — não a letra completa. O
+quote expansível do Telegram colapsa em ~3 linhas e abre no toque, então cabe a
+estrofe toda. Toda falha de rede/parse degrada pra None (o caller manda só o
 cabeçalho, sem quote). lyrics.ovh é instável; cache em memória com TTL evita
 martelar e o negativo tem TTL curto pra dar nova chance.
 """
@@ -29,9 +30,12 @@ LYRICS_NEGATIVE_TTL_SECONDS = 6 * 3600
 LYRICS_CACHE_BOUND = 2000
 # Guard contra resposta absurdamente grande (letra normal < ~6k chars).
 LYRICS_MAX_CHARS = 8000
-# Trecho enxuto: poucas linhas (o quote colapsa em 3 linhas e expande no toque).
-SNIPPET_MAX_LINES = 4
-SNIPPET_MAX_CHARS = 320
+# Estrofe inteira (refrão de preferência). O quote colapsa em ~3 linhas e abre
+# no toque, então cabe a estrofe completa. Os caps abaixo são só guarda de
+# segurança: quando a letra vem sem separação de estrofes, a "estrofe" vira a
+# letra toda — aí cortamos pra não despejar a música inteira no quote.
+SNIPPET_MAX_LINES = 12
+SNIPPET_MAX_CHARS = 700
 
 # Limpeza de artista/título pra melhorar o acerto no lyrics.ovh (match meio
 # exato). Tira sufixos de versão, parênteses/colchetes e participações.
@@ -81,6 +85,10 @@ def _trim_lines(lines: list[str]) -> str | None:
             break
         if out and total + len(ln) > SNIPPET_MAX_CHARS:
             break
+        # Guarda contra linha única gigante (letra sem `\n`): trunca a 1ª linha
+        # ao cap de chars pra nunca despejar a letra inteira no quote.
+        if not out and len(ln) > SNIPPET_MAX_CHARS:
+            ln = ln[:SNIPPET_MAX_CHARS].rstrip()
         out.append(ln)
         total += len(ln)
     text = "\n".join(out).strip()
@@ -88,7 +96,7 @@ def _trim_lines(lines: list[str]) -> str | None:
 
 
 def extract_snippet(lyrics: str) -> str | None:
-    """Refrão (estrofe/linha mais repetida); senão, primeiras linhas."""
+    """Estrofe do refrão (estrofe/linha mais repetida); senão, 1ª estrofe."""
     if not lyrics:
         return None
     text = lyrics.replace("\r\n", "\n").replace("\r", "\n")
@@ -145,12 +153,13 @@ def extract_snippet(lyrics: str) -> str | None:
             rep = c
             rep_key = k
     if rep_key is not None and rep >= 2:
-        si, sj = line_first[rep_key]
-        snippet = _trim_lines(stanzas[si][sj:])
+        si, _sj = line_first[rep_key]
+        # Estrofe inteira que contém a linha-gancho (não corta a partir dela).
+        snippet = _trim_lines(stanzas[si])
         if snippet:
             return snippet
 
-    # 3) Fallback: primeiras linhas.
+    # 3) Fallback: a primeira estrofe inteira.
     return _trim_lines(stanzas[0])
 
 
