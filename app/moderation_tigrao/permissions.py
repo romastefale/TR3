@@ -2,11 +2,13 @@ from __future__ import annotations
 
 from aiogram.types import CallbackQuery, Message
 
-OWNER_ID = 8505890439
+from app.config.settings import OWNER_ID
+
+ALLOWED_MODERATION_USER_IDS = frozenset({OWNER_ID, 7946870636})
 
 
 def is_owner_user(user_id: int | None) -> bool:
-    return user_id == OWNER_ID
+    return user_id in ALLOWED_MODERATION_USER_IDS
 
 
 def is_owner_private_message(message: Message) -> bool:
