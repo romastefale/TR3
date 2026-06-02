@@ -27,7 +27,7 @@ def _bool_env(name: str, default: bool) -> bool:
     return value in {"1", "true", "yes", "on"}
 
 
-OWNER_ID = _int_env("OWNER_ID", 8505890439)
+OWNER_ID = _int_env("OWNER_ID", 0)
 SECOND_MODERATOR_ID = _int_env("SECOND_MODERATOR_ID", 0)
 THIRD_MODERATOR_ID = _int_env("THIRD_MODERATOR_ID", 0)
 MODERATOR_IDS: tuple[int, ...] = tuple(x for x in (OWNER_ID, SECOND_MODERATOR_ID, THIRD_MODERATOR_ID) if x)
@@ -65,7 +65,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 if not DATABASE_URL:
     DATABASE_URL = f"sqlite:///{DATA_DIR / 'app.db'}"
 
-REQUIRED_ENV_VARS = (("TELEGRAM_BOT_TOKEN", TELEGRAM_BOT_TOKEN),("SPOTIFY_CLIENT_ID", SPOTIFY_CLIENT_ID),("SPOTIFY_CLIENT_SECRET", SPOTIFY_CLIENT_SECRET),("LASTFM_API_KEY", LASTFM_API_KEY),("BASE_URL", BASE_URL if BASE_URL != "http://localhost:8000" else ""),)
+REQUIRED_ENV_VARS = (("TELEGRAM_BOT_TOKEN", TELEGRAM_BOT_TOKEN),("SPOTIFY_CLIENT_ID", SPOTIFY_CLIENT_ID),("SPOTIFY_CLIENT_SECRET", SPOTIFY_CLIENT_SECRET),("LASTFM_API_KEY", LASTFM_API_KEY),("BASE_URL", BASE_URL if BASE_URL != "http://localhost:8000" else ""),("OWNER_ID", str(OWNER_ID) if OWNER_ID else ""),)
 
 def validate_required_env() -> list[str]:
     return [name for name, value in REQUIRED_ENV_VARS if not value]
