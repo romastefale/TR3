@@ -1,11 +1,7 @@
 """Filters customizados aiogram3 reutilizáveis.
 
-S3: antes ~10 handlers repetiam o boilerplate
-    `if not message.from_user or message.from_user.id != OWNER_ID: return`
-com sutis variações (alguns retornam silenciosos, outros respondem "Acesso
-negado"). Filter `IsOwner()` aplicado no decorator faz o handler nem ser
-chamado — silencioso por padrão, igual ao comportamento original dos
-comandos owner-only do TR3.
+Handlers privados usam `IsOwner()` no decorator para centralizar a checagem
+por MODERATOR_IDS. O nome foi mantido por estabilidade de API interna.
 """
 from __future__ import annotations
 
@@ -16,13 +12,7 @@ from app.config.settings import MODERATOR_IDS
 
 
 class IsOwner(Filter):
-    """Passa se o `from_user.id` é um moderador autorizado (owner OU 2º
-    co-moderador). Funciona pra Message e CallbackQuery. Silencioso quando
-    bloqueia (handler simplesmente não roda).
-
-    Nome mantido por estabilidade (usado em ~10 handlers). Co-moderação:
-    ambos os IDs em MODERATOR_IDS passam.
-    """
+    """Passa se o `from_user.id` pertence aos moderadores autorizados."""
 
     async def __call__(self, event: TelegramObject) -> bool:
         if isinstance(event, (Message, CallbackQuery)):
