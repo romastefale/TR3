@@ -9,6 +9,7 @@ tmp.close()
 os.environ.setdefault("DATABASE_URL", f"sqlite:///{tmp.name}")
 os.environ.setdefault("DATA_DIR", tempfile.gettempdir())
 os.environ.setdefault("TELEGRAM_BOT_TOKEN", "")
+os.environ.setdefault("OWNER_ID", "1")
 
 from app.bot import private_tools
 from app.bot.intent import detect_intent
@@ -23,6 +24,9 @@ from app.services.lastfm import _stable_track_id, lastfm_service
 from app.services.music import music_service
 from app.services.music_proxy import install_music_proxy
 from app.services.spotify import spotify_service
+
+
+TEST_OWNER_ID = int(os.environ["OWNER_ID"])
 
 
 def _assert_private_tools() -> None:
@@ -43,7 +47,7 @@ def _assert_private_tools() -> None:
     for name in expected_handlers:
         assert hasattr(private_tools, name), f"missing private_tools.{name}"
 
-    assert private_tools.OWNER_ID == 8505890439
+    assert private_tools.OWNER_ID == TEST_OWNER_ID
     assert private_tools._parse_chat_id("1001234567890") == -1001234567890
     assert private_tools._parse_chat_id("-1001234567890") == -1001234567890
 
@@ -63,7 +67,7 @@ def _assert_private_tools() -> None:
 
 
 def _assert_vvv_tools() -> None:
-    assert lili_rodou.OWNER_ID == 8505890439
+    assert lili_rodou.OWNER_ID == TEST_OWNER_ID
     assert lili_rodou._parse_chat_id("1001234567890") == -1001234567890
     assert lili_rodou._parse_chat_id("-1001234567890") == -1001234567890
     assert lili_rodou._parse_user_id("6059326627") == 6059326627
