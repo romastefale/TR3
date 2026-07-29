@@ -1,0 +1,345 @@
+from typing import Any, Dict, List, Optional
+import threading
+import json
+import logging
+from android_utils import run_on_ui_thread
+from base_plugin import BasePlugin, MenuItemData, MenuItemType
+from client_utils import get_last_fragment, send_request
+from ui.bulletin import BulletinHelper
+from ui.alert import AlertDialogBuilder
+from android.content import ClipboardManager, ClipData
+from android.content import Context as AndroidContext
+from org.telegram.tgnet import functions, TLRPC
+# Configuração básica do logger
+logging.basicConfig(level=logging.DEBUG)
+__id__ = "mtproto_rpc_diagnostics_forensic"
+__name__ = "MTProto RPC Diagnostics (Forensic)"
+__description__ = "Extrai TODOS os dados reais do SDK e gera JSON completo"
+__author__ = "Jonas - corrigido por ChatBox AI"
+__version__ = "1.8.1-forensic-full-json-corrigido"
+__icon__ = "msg_info"
+__app_version__ = ">=12.5.1"
+__sdk_version__ = ">=1.4.3.3"
+def _safe_attr(obj: Any, name: str, default: Any = None) -> Any:
+    try:
+        return getattr(obj, name, default)
+    except Exception:
+        return default
+def _to_java_list(value: Any) -> List[Any]:
+    if value is None:
+        return []
+    try:
+        return list(value)
+    except Exception:
+        pass
+    try:
+        return [value.get(i) for i in range(value.size())]
+    except Exception:
+        return []
+def _format_rpc_error(error: Optional[Any]) -> str:
+    if error is None:
+        return "resposta vazia"
+    code = _safe_attr(error, "code", None)
+    text = _safe_attr(error, "text", None)
+    if code is not None and text:
+        return f"{code}: {text}"
+    if text:
+        return str(text)
+    return str(error)
+def _copy_to_clipboard(text: str) -> bool:
+    try:
+        fragment = get_last_fragment()
+        if fragment is None:
+            logging.warning("Fragmento não disponível para copiar ao clipboard.")
+            return False
+        activity = fragment.getParentActivity()
+        if activity is None:
+            logging.warning("Atividade não disponível para copiar ao clipboard.")
+            return False
+        clipboard = activity.getSystemService(AndroidContext.CLIPBOARD_SERVICE)
+        if clipboard is None:
+            logging.warning("Clipboard service não disponível.")
+            return False
+        clip = ClipData.newPlainText("MTProto Forensic JSON", text)
+        clipboard.setPrimaryClip(clip)
+        return True
+    except Exception as exc:
+        logging.error(f"Erro ao copiar para área de transferência: {exc}")
+        return False
+def _serialize(obj: Any, _seen: Optional[set] = None) -> Any:
+    """Serializa objetos do SDK para JSON, evitando ciclos."""
+    if _seen is None:
+        _seen = set()
+    if obj is None:
+        return None
+    if isinstance(obj, (str, int, float, bool)):
+        return obj
+    if id(obj) in _seen:
+        return "<recursão detectada>"
+    _seen.add(id(obj))
+    if isinstance(obj, (list, tuple)):
+        return [_serialize(x, _seen) for x in obj]
+    # Para objetos Java típicos
+    try:
+        if hasattr(obj, "__dict__"):
+            data = {}
+            for k, v in obj.__dict__.items():
+                if not k.startswith("_"):
+                    data[k] = _serialize(v, _seen)
+            return data
+        # Como fallback, converte para string
+        return str(obj)
+    except Exception as e:
+        logging.debug(f"Falha ao serializar objeto: {e}")
+        return str(obj)
+class MTProtoRpcDiagnosticsForensicPlugin(BasePlugin):
+    def on_plugin_load(self) -> None:
+        self._execution_lock = threading.Lock()
+        self._menu_item_id = self.add_menu_item(
+            MenuItemData(
+                menu_type=MenuItemType.CHAT_ACTION_MENU,
+                text="Diagnóstico Forense (JSON Total)",
+                on_click=self.on_menu_click,
+                icon="msg_info",
+                subtext="Extrai absolutamente tudo + JSON completo",
+                priority=5,
+            )
+        )
+        self.log("MTProto Forensic JSON Total carregado")
+    def on_plugin_unload(self) -> None:
+        item_id = getattr(self, "_menu_item_id", None)
+        if item_id:
+            try:
+                self.remove_menu_item(item_id)
+            except Exception as exc:
+                self.log(f"Falha ao remover item: {exc}")
+        self.log("MTProto Forensic descarregado")
+    def on_menu_click(self, context: Dict[str, Any]) -> None:
+        if not self._execution_lock.acquire(blocking=False):
+            self._show_info("Diagnóstico já em execução.")
+            return
+        self._show_info("Extraindo TODOS os dados forenses...")
+        try:
+            self._run_diagnostics(context)
+        except Exception as exc:
+            self._execution_lock.release()
+            self.log(f"Falha ao iniciar diagnóstico: {exc}")
+            self._show_error("Não foi possível iniciar o diagnóstico.")
+    def _run_diagnostics(self, context: Dict[str, Any]) -> None:
+        state: Dict[str, Any] = {
+            "pending": 4,
+            "completed": False,
+            "data": {
+                "timestamp": None,
+                "self_user": None,
+                "config": None,
+                "interlocutor": None,
+                "chat_full": None,
+                "user_full": None,
+                "participants": None,
+                "linked_chat": None,
+                "raw_responses": {},
+            }
+        }
+        state_lock = threading.Lock()
+        def finish_request() -> None:
+            with state_lock:
+                if state["completed"]:
+                    return
+                state["pending"] -= 1
+                if state["pending"] > 0:
+                    return
+                state["completed"] = True
+            report = json.dumps(state["data"], indent=2, ensure_ascii=False)
+            copied = False
+            if len(report) < 1024 * 1024 * 5:  # Até 5 MB tenta copiar, evita crash em textos grandes
+                copied = _copy_to_clipboard(report)
+            msg = report + (
+                ("\n\n[✓] JSON copiado para a área de transferência" if copied
+                 else "\n\n[!] Falha ao copiar para a área de transferência ou relatório muito grande")
+            )
+            try:
+                self._show_report_dialog(msg)
+            except Exception as exc:
+                self.log(f"Falha ao exibir relatório: {exc}")
+                self._show_error("Relatório não pôde ser exibido.")
+            finally:
+                self._execution_lock.release()
+        # Executa as requisições paralelamente
+        self._request_config(state, finish_request)
+        self._request_self_user(state, finish_request)
+        self._request_chat_full(context, state, finish_request)
+        self._request_interlocutor(context, state, finish_request)
+    def _show_report_dialog(self, report: str) -> None:
+        def show() -> None:
+            fragment = get_last_fragment()
+            if fragment is None:
+                self._show_error("Tela atual indisponível.")
+                return
+            activity = fragment.getParentActivity()
+            if activity is None:
+                self._show_error("Atividade indisponível.")
+                return
+            builder = AlertDialogBuilder(activity)
+            builder.set_title("Diagnóstico Forense (JSON Total)")
+            builder.set_message(report)
+            builder.set_positive_button("Fechar", lambda d, w: d.dismiss())
+            builder.show()
+        run_on_ui_thread(show)
+    # ------------------------------
+    # 1. Configuração do cliente
+    # ------------------------------
+    def _request_config(self, state: Dict[str, Any], done) -> None:
+        request = functions.help.GetConfig()
+        done_flag = threading.Event()
+        def callback(response, error):
+            if done_flag.is_set():
+                return
+            done_flag.set()
+            try:
+                if error or response is None:
+                    state["data"]["config"] = {"error": _format_rpc_error(error)}
+                else:
+                    state["data"]["config"] = _serialize(response)
+            except Exception as exc:
+                state["data"]["config"] = {"error": str(exc)}
+            done()
+        try:
+            send_request(request, callback)
+        except Exception as exc:
+            state["data"]["config"] = {"error": str(exc)}
+            done_flag.set()
+            done()
+    # ------------------------------
+    # 2. Conta ativa (self)
+    # ------------------------------
+    def _request_self_user(self, state: Dict[str, Any], done) -> None:
+        request = functions.users.GetUsers()
+        request.id = [TLRPC.TL_inputUserSelf()]
+        done_flag = threading.Event()
+        def callback(response, error):
+            if done_flag.is_set():
+                return
+            done_flag.set()
+            try:
+                if error or response is None:
+                    state["data"]["self_user"] = {"error": _format_rpc_error(error)}
+                else:
+                    users = _to_java_list(response)
+                    state["data"]["self_user"] = _serialize(users[0]) if users else None
+            except Exception as exc:
+                state["data"]["self_user"] = {"error": str(exc)}
+            done()
+        try:
+            send_request(request, callback)
+        except Exception as exc:
+            state["data"]["self_user"] = {"error": str(exc)}
+            done_flag.set()
+            done()
+    # ------------------------------
+    # 3. ChatFull – dados completos do grupo/canal
+    # ------------------------------
+    def _request_chat_full(self, context, state: Dict[str, Any], done) -> None:
+        chat = getattr(context.get("fragment"), "currentChat", None)
+        if chat is None:
+            state["data"]["chat_full"] = {"error": "currentChat não disponível"}
+            done()
+            return
+        chat_id = _safe_attr(chat, "id", None)
+        access_hash = _safe_attr(chat, "access_hash", None)
+        if chat_id is None or access_hash is None:
+            state["data"]["chat_full"] = {"error": "chat sem access_hash"}
+            done()
+            return
+        request = functions.channels.GetFullChannel()
+        input_channel = TLRPC.TL_inputChannel()
+        input_channel.channel_id = int(chat_id)
+        input_channel.access_hash = int(access_hash)
+        request.channel = input_channel
+        done_flag = threading.Event()
+        def callback(response, error):
+            if done_flag.is_set():
+                return
+            done_flag.set()
+            try:
+                if error or response is None:
+                    state["data"]["chat_full"] = {"error": _format_rpc_error(error)}
+                else:
+                    full = _safe_attr(response, "full_chat", response)
+                    state["data"]["chat_full"] = _serialize(full)
+                    participants = _safe_attr(full, "participants", None)
+                    if participants:
+                        state["data"]["participants"] = _serialize(participants)
+                    linked = _safe_attr(full, "linked_chat_id", None)
+                    if linked:
+                        state["data"]["linked_chat"] = linked
+            except Exception as exc:
+                state["data"]["chat_full"] = {"error": str(exc)}
+            done()
+        try:
+            send_request(request, callback)
+        except Exception as exc:
+            state["data"]["chat_full"] = {"error": str(exc)}
+            done_flag.set()
+            done()
+    # ------------------------------
+    # 4. Interlocutor (usuário ou chat)
+    # ------------------------------
+    def _request_interlocutor(self, context, state: Dict[str, Any], done) -> None:
+        candidates = [
+            ("currentUser", getattr(context.get("fragment"), "currentUser", None)),
+            ("currentChat", getattr(context.get("fragment"), "currentChat", None)),
+            ("user", context.get("user")),
+            ("chat", context.get("chat")),
+            ("dialog", context.get("dialog")),
+        ]
+        peer = None
+        source = None
+        for name, obj in candidates:
+            if obj is not None:
+                peer = obj
+                source = name
+                break
+        if peer is None:
+            state["data"]["interlocutor"] = {"error": "Nenhum peer disponível"}
+            done()
+            return
+        state["data"]["interlocutor"] = {
+            "source": source,
+            "data": _serialize(peer)
+        }
+        user_id = _safe_attr(peer, "id", None)
+        access_hash = _safe_attr(peer, "access_hash", None)
+        if user_id is None or access_hash is None:
+            done()
+            return
+        request = functions.users.GetFullUser()
+        input_user = TLRPC.TL_inputUser()
+        input_user.user_id = int(user_id)
+        input_user.access_hash = int(access_hash)
+        request.id = input_user
+        done_flag = threading.Event()
+        def callback(response, error):
+            if done_flag.is_set():
+                return
+            done_flag.set()
+            try:
+                if error or response is None:
+                    state["data"]["user_full"] = {"error": _format_rpc_error(error)}
+                else:
+                    state["data"]["user_full"] = _serialize(response)
+            except Exception as exc:
+                state["data"]["user_full"] = {"error": str(exc)}
+            done()
+        try:
+            send_request(request, callback)
+        except Exception as exc:
+            state["data"]["user_full"] = {"error": str(exc)}
+            done_flag.set()
+            done()
+    @staticmethod
+    def _show_info(msg: str) -> None:
+        run_on_ui_thread(lambda: BulletinHelper.show_info(msg))
+    @staticmethod
+    def _show_error(msg: str) -> None:
+        run_on_ui_thread(lambda: BulletinHelper.show_error(msg))
